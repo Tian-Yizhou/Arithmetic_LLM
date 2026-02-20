@@ -3,8 +3,8 @@
 
 import argparse
 import json
-from train_instruction_d import train_instruction_model
-from training_config_d import TrainingConfig
+from training.train_instruction_d import train_instruction_model
+from configs.training_config_d import TrainingConfig
 from accelerate import Accelerator
 
 

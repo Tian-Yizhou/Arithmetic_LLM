@@ -225,6 +225,9 @@ def train_instruction_model_lora(
     global_step = 0
     best_val_loss = float('inf')
     training_log = []
+    prev_val_loss = None
+    patience_counter = 0
+    early_stopped = False
 
     for epoch in range(config.num_epochs):
         if accelerator.is_local_main_process:
@@ -292,9 +295,32 @@ def train_instruction_model_lora(
                     os.remove(best_model_path)
                 os.rename(best_checkpoint_path, best_model_path)
                 print(f"  New best model saved: {best_model_path}")
-        
+
+        # Early stopping check (all processes see the same val_loss from gather)
+        if config.early_stopping and prev_val_loss is not None:
+            if prev_val_loss == 0:
+                improvement_ratio = 0.0 if val_loss == 0 else float('inf')
+            else:
+                improvement_ratio = (prev_val_loss - val_loss) / abs(prev_val_loss)
+
+            if improvement_ratio < config.early_stopping_epsilon:
+                patience_counter += 1
+                if accelerator.is_local_main_process:
+                    print(f"  Early stopping: insufficient improvement ({improvement_ratio:.6f} < {config.early_stopping_epsilon}), patience {patience_counter}/{config.early_stopping_patience}")
+                if patience_counter >= config.early_stopping_patience:
+                    if accelerator.is_local_main_process:
+                        print(f"\nEarly stopping triggered at epoch {epoch + 1}!")
+                    early_stopped = True
+            else:
+                patience_counter = 0
+
+        prev_val_loss = val_loss
+
         # [修改 10] 等待同步
         accelerator.wait_for_everyone()
+
+        if early_stopped:
+            break
 
     # Save final model
     accelerator.wait_for_everyone() # 确保所有进程都跑完了

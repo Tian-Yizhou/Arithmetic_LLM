@@ -3,8 +3,8 @@
 import argparse
 import os
 
-from grpo_config import GRPOConfig
-from train_grpo_d import train_grpo_model
+from configs.grpo_config import GRPOConfig
+from training.train_grpo_d import train_grpo_model
 from accelerate import Accelerator
 
 

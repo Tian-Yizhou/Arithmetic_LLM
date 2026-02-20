@@ -12,11 +12,11 @@ from typing import Optional, Dict
 from accelerate import Accelerator
 import math
 
-from transformer_model import ArithmeticTransformer
-from arithmetic_tokenizer import ArithmeticBPETokenizer
-from data_loader import create_dataloaders
-from training_config_d import TrainingConfig
-from train_foundational_d import (
+from model.transformer_model import ArithmeticTransformer
+from data.arithmetic_tokenizer import ArithmeticBPETokenizer
+from data.data_loader import create_dataloaders
+from configs.training_config_d import TrainingConfig
+from training.train_foundational_d import (
     get_linear_schedule_with_warmup,
     save_checkpoint,
     load_checkpoint,

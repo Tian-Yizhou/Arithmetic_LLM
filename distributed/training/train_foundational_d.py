@@ -13,10 +13,10 @@ from tqdm import tqdm
 from typing import Optional, Dict, Tuple
 import math
 
-from transformer_model import ArithmeticTransformer
-from arithmetic_tokenizer import ArithmeticBPETokenizer
-from data_loader import create_dataloaders
-from training_config_d import TrainingConfig
+from model.transformer_model import ArithmeticTransformer
+from data.arithmetic_tokenizer import ArithmeticBPETokenizer
+from data.data_loader import create_dataloaders
+from configs.training_config_d import TrainingConfig
 # import accelerate to distribute training
 from accelerate import Accelerator
 
@@ -301,25 +301,28 @@ def train_foundational_model(
     tokenizer_path: str,
     output_dir: str,
     config: TrainingConfig,
-    model_config: Optional[Dict] = None
+    model_config: Optional[Dict] = None,
+    accelerator: Accelerator = None
 ) -> str:
     """Train foundational model on arithmetic corpus.
-    
+
     Args:
         corpus_path: Path to training corpus
         tokenizer_path: Path to trained tokenizer
         output_dir: Directory to save checkpoints and logs
         config: Training configuration
         model_config: Optional model architecture configuration
-        
+        accelerator: Pre-initialized Accelerator instance
+
     Returns:
         Path to final model checkpoint
     """
-    # [modified] Initialize accelerator for distributed training
-    accelerator = Accelerator(
-        gradient_accumulation_steps=config.gradient_accumulation_steps, # 如果你的 config 有这个参数
-        mixed_precision="fp16" # 或者 "bf16"，也可以在 accelerate config 中配置
-    )
+    # Use provided accelerator or create a new one
+    if accelerator is None:
+        accelerator = Accelerator(
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            mixed_precision="fp16"
+        )
 
     # [modified] only main process print logs
     if accelerator.is_local_main_process:

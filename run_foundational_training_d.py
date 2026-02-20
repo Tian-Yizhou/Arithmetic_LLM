@@ -34,6 +34,11 @@ def main():
     # [新增 3] 梯度累积参数
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1, help="Number of steps to accumulate gradients (default: 1)")
 
+    # Early stopping
+    parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping based on validation loss improvement ratio")
+    parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of epochs with insufficient improvement before stopping (default: 3)")
+    parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum loss improvement ratio to continue training (default: 1e-4)")
+
     # [修改 4] Device 参数通常不再需要，accelerate 会自动处理。
     # 但为了兼容性可以保留，只是在代码里忽略它。
     parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
@@ -66,6 +71,9 @@ def main():
             gradient_clip=args.gradient_clip,
             save_every=args.save_every,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
+            early_stopping=args.early_stopping,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_epsilon=args.early_stopping_epsilon,
             # device=...  <-- 不再传递 device
         )
     

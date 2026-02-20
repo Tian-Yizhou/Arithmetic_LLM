@@ -12,15 +12,15 @@ import torch
 import torch.nn.functional as F
 from accelerate import Accelerator
 
-from arithmetic_tokenizer import ArithmeticBPETokenizer
-from arithmetic_verifier import ArithmeticVerifier
-from train_foundational_d import (
+from data.arithmetic_tokenizer import ArithmeticBPETokenizer
+from evaluation.arithmetic_verifier import ArithmeticVerifier
+from training.train_foundational_d import (
     get_linear_schedule_with_warmup,
     load_checkpoint,
 )
-from transformer_model import ArithmeticTransformer
+from model.transformer_model import ArithmeticTransformer
 
-from grpo_config import GRPOConfig
+from configs.grpo_config import GRPOConfig
 
 
 class GRPOTrainer:
