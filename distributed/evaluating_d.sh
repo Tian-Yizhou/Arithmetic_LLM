@@ -21,7 +21,7 @@ accelerate launch run_evaluation_d.py \
   --num-samples 1000
 
 # merge LoRA adapter with the base model to get a standalone model (optional)
-python merge_lora_adapter.py \
+python model/merge_lora_adapter.py \
   --base-checkpoint models/foundational_YYYYMMDD_HHMMSS/best_model.pt \
   --adapter-path models/instruction_lora_YYYYMMDD_HHMMSS/lora_adapter.pt \
   --output-path models/instruction_lora_YYYYMMDD_HHMMSS/merged_model.pt

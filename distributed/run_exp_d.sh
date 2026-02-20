@@ -101,7 +101,7 @@ accelerate launch run_evaluation_d.py \
 # 5.1 Evaluate LoRA (Includes Merge Step)
 
 # merge LoRA adapter with the base model to get a standalone model (optional)
-python merge_lora_adapter.py \
+python model/merge_lora_adapter.py \
   --base-checkpoint "$FOUNDATIONAL_CKPT" \
   --adapter-path "$LORA_ADAPTER" \
   --output-path "$LORA_MERGED_OUTPUT"
