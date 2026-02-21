@@ -1,10 +1,61 @@
+# !/bin/bash
 
-echo "PHASE 1: TRAINING PIPELINE"
+# activate environment
+conda activate ds
+
+## 1. Data Preparation
+
+### 1.1 Corpus Generation
 
 
+python -m data.generate_foundational_plaintext \
+  --num-samples 100000 \
+  --max-depth 4 \
+  --num-range 1 20 \
+  --invalid-rate 0.05 \
+  --output-txt data/foundational_corpus.txt
 
-# 3. Train foundational model
-echo ">>> [Train Step 1/4] Starting Foundational Training..."
+
+### 1.2 Tokenizer Training
+
+
+python -m data.generate_instruction_corpus_mixed \
+  --num-samples 20000 \
+  --max-depth 4 \
+  --num-range 1 20 \
+  --invalid-rate 0.0 \
+  --output-mixed data/instruction_corpus.txt
+
+
+### 1.3 Sequence Analysis
+
+
+python -m data.generate_corpus \
+  --instruction-only \
+  --num-samples 1000 \
+  --max-depth 4 \
+  --num-range 1 20 \
+  --invalid-rate 0.01 \
+  --output-instruction data/instruction_corpus_test.txt
+
+
+### 1.4 Tokenizer Training
+
+
+python -m train_tokenizer \
+  --corpus-path data/foundational_corpus.txt \
+  --output-dir data/tokenizer \
+  --vocab-size 1000
+
+
+## 2. Model Training
+
+### 2.1 Train Fundational Model
+
+
+# Train fundational model
+echo ">>> Starting Foundational Training..."
+
 accelerate launch run_foundational_training_d.py \
   --corpus-path data/foundational_corpus.txt \
   --output-dir models/ \
@@ -14,13 +65,17 @@ accelerate launch run_foundational_training_d.py \
   --learning-rate 4e-4 \
   --num-epochs 7
 
-# foundational best model path
+# set foundational best model path
 FOUNDATIONAL_DIR=$(ls -td models/foundational_* | head -n 1)
 FOUNDATIONAL_CKPT="${FOUNDATIONAL_DIR}/best_model.pt"
 
 
-# 4. Train instruction-tuned model
-echo ">>> [Train Step 2/4] Starting Instruction Training..."
+### 2.2  Train Instruction-tuned Model
+
+
+# Train instruction-tuned model
+echo ">>> Starting Instruction Training..."
+
 accelerate launch run_instruction_training_d.py \
     --instruction-corpus-path data/instruction_corpus.txt \
     --tokenizer-path data/tokenizer \
@@ -30,13 +85,17 @@ accelerate launch run_instruction_training_d.py \
     --learning-rate 2e-5 \
     --num-epochs 35
 
-
+# set intruction model path
 INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
 INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 
 
-# 5. Fine-tune with LoRA adapters (Optional)
-echo ">>> [Train Step 3/4] Starting LoRA Training..."
+### 2.3  Fine-tune with LoRA adapters
+
+
+# Fine-tune with LoRA adapters
+echo ">>> Starting LoRA Training..."
+
 accelerate launch run_instruction_training_lora_d.py \
   --instruction-corpus-path data/instruction_corpus.txt \
   --output-dir models/ \
@@ -52,14 +111,18 @@ accelerate launch run_instruction_training_lora_d.py \
   --learning-rate 1e-4 \
   --gradient-accumulation-steps 1
 
-
+# set LoRA adapter path
 LORA_DIR=$(ls -td models/instruction_lora_* | head -n 1)
 LORA_ADAPTER="${LORA_DIR}/lora_adapter.pt"
 LORA_MERGED_OUTPUT="${LORA_DIR}/merged_model.pt"
 
 
-# 6. GRPO training (Optional)
-echo ">>> [Train Step 4/4] Starting GRPO Training..."
+### 2.4 GRPO training
+
+
+# 2.4 GRPO training
+echo ">>> Starting GRPO Training..."
+
 accelerate launch run_grpo_training_d.py \
   --tokenizer data/tokenizer \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
@@ -70,16 +133,20 @@ accelerate launch run_grpo_training_d.py \
   --batch-size 8 \
   --kl-penalty-coef 0.05
 
-
+# set GRPO path
 GRPO_DIR=$(ls -td models/grpo/grpo_* | head -n 1)
 GRPO_CKPT="${GRPO_DIR}/final_model.pt"
 
 
-echo "PHASE 2: EVALUATION PIPELINE"
+## 3. Model Evaluation
 
 
-# 3.1 Evaluate Foundational
-echo ">>> [Eval Step 1/4] Evaluating Foundational Model..."
+### 3.1 Evaluate Foundational Model
+
+
+# 3.1 Evaluate Foundational Model
+echo ">>> Evaluating Foundational Model..."
+
 accelerate launch run_evaluation_d.py \
   --model-path "$FOUNDATIONAL_CKPT" \
   --tokenizer-path data/tokenizer \
@@ -88,8 +155,12 @@ accelerate launch run_evaluation_d.py \
   --batch-size 1
 
 
-# 4.1 Evaluate Instruction
-echo ">>> [Eval Step 2/4] Evaluating Instruction Model..."
+### 3.2 Evaluate Instruction
+
+
+# 3.2 Evaluate Instruction
+echo ">>> Evaluating Instruction Model..."
+
 accelerate launch run_evaluation_d.py \
   --model-path "$INSTRUCTION_CKPT" \
   --tokenizer-path data/tokenizer \
@@ -98,15 +169,20 @@ accelerate launch run_evaluation_d.py \
   --num-samples 1000
 
 
-# 5.1 Evaluate LoRA (Includes Merge Step)
+### 3.3 Evaluate LoRA (Includes Merge Step)
 
-# merge LoRA adapter with the base model to get a standalone model (optional)
-python merge_lora_adapter.py \
+
+# 3.3 Evaluate LoRA (Includes Merge Step)
+
+# merge LoRA adapter with the base model
+python model/merge_lora_adapter.py \
   --base-checkpoint "$FOUNDATIONAL_CKPT" \
   --adapter-path "$LORA_ADAPTER" \
   --output-path "$LORA_MERGED_OUTPUT"
 
-# 5.1 Evaluate the LoRA merged model (optional)
+# Evaluate the LoRA merged model
+echo ">>> Evaluating LoRA-merged Model..."
+
 accelerate launch run_evaluation_d.py \
   --model-path "$LORA_MERGED_OUTPUT" \
   --tokenizer-path data/tokenizer \
@@ -115,11 +191,16 @@ accelerate launch run_evaluation_d.py \
   --num-samples 1000
 
 
-# 6.1 Evaluate GRPO
-echo ">>> [Eval Step 4/4] Evaluating GRPO Model..."
+### 3.4 Evaluate GRPO
+
+
+# 3.4 Evaluate GRPO
+echo ">>> Evaluating GRPO Model..."
+
 accelerate launch run_evaluation_d.py \
   --model-path "$GRPO_CKPT" \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
   --batch-size 1 \
   --num-samples 1000
+

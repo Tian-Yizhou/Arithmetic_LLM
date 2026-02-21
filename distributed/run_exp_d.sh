@@ -1,7 +1,11 @@
 
+
+# activate environment
+conda activate ds
+
+# start training pipeline
+
 echo "PHASE 1: TRAINING PIPELINE"
-
-
 
 # 3. Train foundational model
 echo ">>> [Train Step 1/4] Starting Foundational Training..."
