@@ -1,4 +1,4 @@
-# !/bin/bash
+#!/bin/bash
 
 # activate environment
 conda activate ds
@@ -63,7 +63,9 @@ accelerate launch run_foundational_training_d.py \
   --max-seq-length 512 \
   --batch-size 16 \
   --learning-rate 4e-4 \
-  --num-epochs 7
+  --num-epochs 7 \
+  --early-stopping \
+  --early-stopping-patience 2
 
 # set foundational best model path
 FOUNDATIONAL_DIR=$(ls -td models/foundational_* | head -n 1)
@@ -77,13 +79,15 @@ FOUNDATIONAL_CKPT="${FOUNDATIONAL_DIR}/best_model.pt"
 echo ">>> Starting Instruction Training..."
 
 accelerate launch run_instruction_training_d.py \
-    --instruction-corpus-path data/instruction_corpus.txt \
-    --tokenizer-path data/tokenizer \
-    --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
-    --batch-size 8 \
-    --gradient-accumulation-steps 1 \
-    --learning-rate 2e-5 \
-    --num-epochs 35
+  --instruction-corpus-path data/instruction_corpus.txt \
+  --tokenizer-path data/tokenizer \
+  --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
+  --batch-size 8 \
+  --gradient-accumulation-steps 1 \
+  --learning-rate 2e-5 \
+  --num-epochs 20 \
+  --early-stopping \
+  --early-stopping-patience 2
 
 # set intruction model path
 INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
@@ -101,15 +105,17 @@ accelerate launch run_instruction_training_lora_d.py \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
   --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
-  --num-epochs 25 \
-  --lora-rank 32 \
-  --lora-alpha 64 \
+  --num-epochs 20 \
+  --lora-rank 16 \
+  --lora-alpha 32 \
   --lora-target-modules attention,feedforward \
   --lora-dropout 0.1 \
   --save-merged-model \
   --batch-size 8 \
   --learning-rate 1e-4 \
-  --gradient-accumulation-steps 1
+  --gradient-accumulation-steps 1 \
+  --early-stopping \
+  --early-stopping-patience 2
 
 # set LoRA adapter path
 LORA_DIR=$(ls -td models/instruction_lora_* | head -n 1)
@@ -127,11 +133,13 @@ accelerate launch run_grpo_training_d.py \
   --tokenizer data/tokenizer \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
   --output-dir models/grpo \
-  --num-epochs 5 \
+  --num-epochs 10 \
   --num-candidates 4 \
   --temperature 0.8 \
   --batch-size 8 \
-  --kl-penalty-coef 0.05
+  --kl-penalty-coef 0.05 \
+  --early-stopping \
+  --early-stopping-patience 2
 
 # set GRPO path
 GRPO_DIR=$(ls -td models/grpo/grpo_* | head -n 1)

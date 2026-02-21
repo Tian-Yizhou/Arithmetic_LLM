@@ -208,3 +208,4 @@ __marimo__/
 
 # Claude Code config
 CLAUDE.md
+.claude/
