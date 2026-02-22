@@ -16,6 +16,13 @@ from accelerate import Accelerator
 
 
 class Node:
+    """AST node for an arithmetic expression tree.
+
+    kind: 'num' for leaf (integer) nodes, 'bin' for binary operation nodes.
+    evaluated: tracks whether this subtree has been reduced to a single value,
+               used by render_expression() to decide whether to show the numeric
+               result or the original sub-expression.
+    """
     def __init__(self, kind, value=None, left=None, right=None, op=None):
         self.kind = kind
         self.value = value
@@ -25,6 +32,11 @@ class Node:
         self.evaluated = kind == 'num'
 
 class ArithmeticEvaluator:
+    """Recursive-descent parser and step-by-step evaluator for arithmetic expressions.
+
+    Supports +, -, and parentheses. Produces a list of intermediate evaluation
+    steps (e.g. "5 + 3 = 8") by post-order traversal of the parsed AST.
+    """
     def __init__(self, expression):
         # Check for invalid consecutive numbers before removing spaces
         # Pattern: digit(s), whitespace(s), digit(s) without an operator between
@@ -76,12 +88,23 @@ class ArithmeticEvaluator:
         return Node('num', value=int(token))
 
     def render_expression(self, node, is_root=False):
+        """Render the current state of the AST as a string.
+
+        Already-evaluated subtrees show their numeric result; unevaluated
+        subtrees show the original sub-expression wrapped in parentheses
+        (unless it is the root expression).
+        """
         if node.evaluated:
             return str(node.value)
         expr = f"{self.render_expression(node.left)} {node.op} {self.render_expression(node.right)}"
         return expr if is_root else f"({expr})"
 
     def evaluate_node(self, node):
+        """Post-order evaluate: recurse into children first, then compute this node.
+
+        After computing, marks the node as evaluated and records the step
+        along with a snapshot of the entire expression's current state.
+        """
         if node.kind == 'num':
             return node.value
         left_val = self.evaluate_node(node.left)

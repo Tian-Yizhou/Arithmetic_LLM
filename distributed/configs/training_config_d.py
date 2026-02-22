@@ -26,25 +26,23 @@ class TrainingConfig:
     """
     
     learning_rate: float = 1e-4
-    batch_size: int = 32  # 注意：这是单卡 batch size
+    batch_size: int = 32  # Note: this is per-device batch size
     num_epochs: int = 10
     warmup_steps: int = 1000
     gradient_clip: float = 1.0
-    gradient_accumulation_steps: int = 1  # [新增] 默认为 1
+    gradient_accumulation_steps: int = 1
     save_every: int = 1000
     eval_every: int = 500
-    mixed_precision: str = "no" # [新增] 用于显式控制精度，可选
+    mixed_precision: str = "no"
 
-    # [修改] device 字段不再作为核心配置，或者设为 Optional
-    # 因为由 Accelerator 决定，这里只作为只读属性或不需要设置
-    # device: str = ... (建议删除，或设为 None)
+    # Device field removed: Accelerator handles device placement automatically.
 
     # Early stopping configuration
     early_stopping: bool = False
     early_stopping_patience: int = 3
     early_stopping_epsilon: float = 1e-4
 
-    lora_config: Optional['LoRAConfig'] = None # 假设 LoRAConfig 已定义
+    lora_config: Optional['LoRAConfig'] = None
     
     def validate(self) -> None:
         """Validate configuration parameters."""
@@ -63,7 +61,6 @@ class TrainingConfig:
         if self.gradient_clip <= 0:
             raise ValueError(f"gradient_clip must be positive, got {self.gradient_clip}")
             
-        # [新增] 验证 accumulation steps
         if self.gradient_accumulation_steps <= 0:
             raise ValueError(f"gradient_accumulation_steps must be positive, got {self.gradient_accumulation_steps}")
         
@@ -79,12 +76,10 @@ class TrainingConfig:
         if self.early_stopping_epsilon <= 0:
             raise ValueError(f"early_stopping_epsilon must be positive, got {self.early_stopping_epsilon}")
 
-        # [修改] 移除了关于 device 的验证逻辑
-        # 因为在 accelerate launch 启动时，某些环境变量可能让 torch.cuda.is_available() 行为发生变化，
-        # 且我们不再依赖 config.device 来做 .to() 操作。
+        # Device validation removed: Accelerator manages device placement,
+        # so config.device is no longer used for .to() calls.
 
         if self.lora_config is not None:
-            # 假设 LoRAConfig 也有 validate 方法
             if hasattr(self.lora_config, 'validate'):
                 self.lora_config.validate()
     
@@ -99,15 +94,12 @@ class TrainingConfig:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in configuration file: {e}")
         
-        # 处理嵌套的 lora_config
+        # Handle nested lora_config deserialization
         if "lora_config" in config_dict and config_dict["lora_config"] is not None:
-            # 确保 LoRAConfig 类在作用域内可用
-            # lora_config = LoRAConfig(**config_dict["lora_config"]) 
-            # 这里保持你原有的逻辑，假设 LoRAConfig 可用
-            pass 
+            pass
 
-        # 过滤掉 JSON 中可能存在的旧字段 (比如 'device')，防止报错
-        # 这样即使旧的 json 文件里有 "device": "cuda"，也不会因为 __init__ 不接受而崩溃
+        # Filter out deprecated fields (e.g. 'device') from older JSON configs
+        # to prevent TypeError on __init__
         valid_keys = cls.__dataclass_fields__.keys()
         filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
         
@@ -115,10 +107,9 @@ class TrainingConfig:
         config.validate()
         return config
 
-    # to_json 和 to_dict 方法通常不需要大改，保持原样即可
     def to_dict(self) -> dict:
         config_dict: Dict[str, Any] = asdict(self)
-        # 处理 lora_config 的序列化
+        # Serialize lora_config using its own to_dict if available
         if self.lora_config is not None and hasattr(self.lora_config, 'to_dict'):
              config_dict["lora_config"] = self.lora_config.to_dict()
         elif self.lora_config is not None:
