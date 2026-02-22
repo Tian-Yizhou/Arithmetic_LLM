@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--gradient-clip", type=float, default=1.0, help="Gradient clipping value (default: 1.0)")
     parser.add_argument("--save-every", type=int, default=500, help="Save checkpoint every N steps (default: 500)")
     
-    # [新增] 梯度累积参数
+    # Gradient accumulation.
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1, help="Number of steps to accumulate gradients (default: 1)")
     
     # Early stopping
@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of epochs with insufficient improvement before stopping (default: 3)")
     parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum loss improvement ratio to continue training (default: 1e-4)")
 
-    # [修改] Device 参数保留但忽略
+    # Device argument is kept for CLI compatibility but ignored by Accelerate.
     parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
 
     # Model configuration
@@ -58,7 +58,7 @@ def main():
             print(f"Loading training configuration from: {args.config}")
         config = TrainingConfig.from_json(args.config)
     else:
-        # [修改] 移除 device 检测逻辑，传入 gradient_accumulation_steps
+        # Create training config from CLI arguments.
         config = TrainingConfig(
             learning_rate=args.learning_rate,
             batch_size=args.batch_size,
@@ -70,7 +70,6 @@ def main():
             early_stopping=args.early_stopping,
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_epsilon=args.early_stopping_epsilon,
-            # device=device <-- 删除
         )
     
     # Load model configuration if provided
@@ -81,7 +80,7 @@ def main():
         with open(args.model_config, 'r') as f:
             model_config = json.load(f)
     
-    # [修改] Display configuration - 只在主进程打印
+    # Display configuration (main process only).
     if accelerator.is_local_main_process:
         print("\n" + "=" * 60)
         print("INSTRUCTION FINE-TUNING (Accelerated)")

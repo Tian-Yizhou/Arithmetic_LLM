@@ -170,8 +170,8 @@ def train_epoch(
         progress_bar = train_dataloader
     
     for batch_idx, (input_ids, attention_mask, labels) in enumerate(progress_bar):
-        # [关键修改 1] 使用 accumulate 包装整个前向+后向过程
-        # 这会自动处理梯度累积：只有达到 accumulation_steps 时才会真正同步梯度
+        # Use accumulate() to wrap forward+backward: gradients are only
+        # synchronized across processes when accumulation_steps is reached.
         with accelerator.accumulate(model):
             # Prepare inputs and targets
             inputs = input_ids[:, :-1]
@@ -189,44 +189,40 @@ def train_epoch(
             )
             
             # Backward pass
-            # 注意：在 accumulate 下，zero_grad 应该放在循环开头或此处
-            
             accelerator.backward(loss)
-            
-            # [关键修改 2] 使用 accelerator 专用的梯度裁剪
-            # 它会自动处理多卡间的梯度同步
+
+            # Clip gradients only after they have been synchronized.
             if accelerator.sync_gradients:
                 accelerator.clip_grad_norm_(model.parameters(), config.gradient_clip)
             
-            # [关键修改 3] 更新优化器和调度器
-            # 在 accumulate 环境下，step() 只有在梯度同步时（即累积完成时）才会真正执行
+            # Under accumulate(), step() only takes effect when gradients
+            # are synchronized (i.e. accumulation is complete).
             optimizer.step()
             if accelerator.sync_gradients:
                 scheduler.step()
                 
             optimizer.zero_grad()
 
-        # [关键修改 4] global_step 的逻辑对齐
-        # 只有当模型真正更新了权重（即一个 update step 完成）时，才增加 global_step
+        # Increment global_step only when an actual weight update happens
+        # (i.e. after gradient accumulation is complete).
         if accelerator.sync_gradients:
             global_step += 1
 
-        # 统计逻辑保持不变（按 batch 统计 loss）
+        # Accumulate loss statistics per batch.
         total_loss += loss.detach()
         num_batches += 1
         
-        # 更新进度条
+        # Update progress bar.
         if batch_idx % 10 == 0 and accelerator.is_local_main_process:
             current_lr = scheduler.get_last_lr()[0]
             progress_bar.set_postfix({
                 'loss': f"{loss.item():.4f}",
                 'avg_loss': f"{(total_loss / num_batches).item():.4f}",
                 'lr': f"{current_lr:.2e}",
-                'step': global_step  # 显示真正的 update step
+                'step': global_step
             })
         
-        # 保存 Checkpoint 逻辑
-        # 现在的 global_step 是基于更新次数的，与你 scheduler 的 total_steps 完全对齐
+        # Save checkpoint at regular intervals.
         if global_step > 0 and global_step % config.save_every == 0 and accelerator.sync_gradients:
             accelerator.wait_for_everyone()
             if accelerator.is_local_main_process:
@@ -280,17 +276,17 @@ def evaluate(
                 ignore_index=-100
             )
             
-            # [modified 3] gather loss from all GPUs to compute global average loss
-            # loss is scaler, we need to reshape to gather
+            # Gather per-device losses to compute a global average.
+            # Loss is a scalar; reshape to (1,) so gather can concatenate.
             all_losses = accelerator.gather(loss.reshape(1))
             
-            # use average loss of current batch to compute global loss
+            # Average across all devices for this batch.
             avg_batch_loss = all_losses.mean().item()
             
             total_loss += avg_batch_loss
             num_batches += 1
     
-    # 计算所有 batch 的平均值
+    # Average loss across all batches.
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
     
     return avg_loss
@@ -338,12 +334,10 @@ def train_foundational_model(
         print(f"Configuration: {config.to_dict()}")
         print("Loading tokenizer...")
 
-    # [注意] 所有进程都需要知道 output_dir，但它是在主进程生成的。
-    # 简单的做法是：去掉 timestamp，或者让 timestamp 固定。
-    # 为了严谨，这里应该广播 output_dir，但为了代码简单，建议在多卡训练时固定 output_dir 的路径，或者容忍非主进程不知道正确路径（只要它们不保存文件）。
-    # 这里我们假设非主进程不需要知道 output_dir 用于保存。
+    # Note: output_dir is timestamped and created on the main process only.
+    # Non-main processes never write files, so they don't need the exact path.
 
-    # Load tokenizer to all processes
+    # Load tokenizer on all processes.
     tokenizer = ArithmeticBPETokenizer()
     tokenizer.load(tokenizer_path)
     vocab_size = len(tokenizer.token2id)
@@ -388,8 +382,7 @@ def train_foundational_model(
     
     model = ArithmeticTransformer(**model_config)
     
-    # [modified] delete model.to(config.device)
-    # accelerator.prepare handle devices
+    # Device placement is handled by accelerator.prepare() below.
     
     # Initialize optimizer
     optimizer = torch.optim.AdamW(
@@ -400,25 +393,22 @@ def train_foundational_model(
         weight_decay=0.01
     )
     
-    
-    # [modified] Prepare model, optimizer, dataloaders with accelerator before calculating total steps and initializing scheduler
-    # this will wrap the model with DDP or FSDP, and also handle moving model and data to the correct device in distributed training
+
+    # Prepare model, optimizer, and dataloaders for distributed training.
+    # This wraps the model with DDP/FSDP and moves data to the correct device.
     model, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, val_dataloader
     )
 
-    # [modified] Calculate total training steps
+    # Calculate total training steps (update steps, not micro-batches).
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accelerator.gradient_accumulation_steps)
     total_steps = num_update_steps_per_epoch * config.num_epochs
-    
-    # 动态计算 warmup
-    warmup_ratio = 0.05 # 5% 的步数用于热身
-    calculated_warmup_steps = int(total_steps * warmup_ratio)
 
-    # 确保至少有一点热身，且不超过 config 的硬性限制（如果有的话）
-    real_warmup_steps = calculated_warmup_steps
+    # Use 5% of total steps for learning rate warmup.
+    warmup_ratio = 0.05
+    real_warmup_steps = int(total_steps * warmup_ratio)
 
-    # [modified] prepare Scheduler
+    # Initialize and prepare the learning rate scheduler.
     scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=real_warmup_steps,
@@ -450,7 +440,6 @@ def train_foundational_model(
             print(f"Epoch {epoch + 1}/{config.num_epochs}")
             print(f"{'='*60}")
         
-        # [modified] add accelerator
         train_loss, global_step = train_epoch(
             model=model,
             train_dataloader=train_dataloader,
@@ -461,10 +450,10 @@ def train_foundational_model(
             global_step=global_step,
             output_dir=output_dir,
             tokenizer_vocab_size=vocab_size,
-            accelerator=accelerator  # input accelerator
+            accelerator=accelerator
         )
         
-        # [modified] input accelerator to evaluate function to gather validation loss across GPUs
+        # Evaluate and gather validation loss across all GPUs.
         if accelerator.is_local_main_process:
             print("\nEvaluating on validation set...")
             
@@ -488,11 +477,12 @@ def train_foundational_model(
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 
-                # Unwrap model before saving
+                # Unwrap model before saving to get the raw state dict
+                # (without DDP/FSDP wrapper prefixes).
                 unwrapped_model = accelerator.unwrap_model(model)
-                
+
                 best_checkpoint_path = save_checkpoint(
-                    model=unwrapped_model, # 使用 unwrapped model
+                    model=unwrapped_model,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     epoch=epoch + 1,
@@ -531,14 +521,13 @@ def train_foundational_model(
 
         prev_val_loss = val_loss
 
-        # wait all processes to finish and saving before next epoch
+        # Wait for all processes to finish before next epoch.
         accelerator.wait_for_everyone()
 
         if early_stopped:
             break
     
-    # Save final model
-    # we need wait and unwrap model before saving final checkpoint
+    # Wait for all processes, then save final model on main process.
     accelerator.wait_for_everyone()
     
     if accelerator.is_local_main_process:
@@ -586,6 +575,6 @@ def train_foundational_model(
         
         return final_checkpoint_path
     else:
-        return "" # return empty string for non-main processes, they don't save the model
+        return ""
 
 

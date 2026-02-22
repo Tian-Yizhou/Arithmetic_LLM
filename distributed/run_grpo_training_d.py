@@ -93,16 +93,13 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
     
-    # [新增 1] 初始化 Accelerator
-    # 这一步接管了设备放置和分布式环境检测
+    # Initialize Accelerator for distributed training and device placement.
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision="fp16" # 建议显式开启混合精度，特别是对于 GRPO 这种计算量大的任务
+        mixed_precision="fp16"
     )
 
-    # 验证参数 (通常只打印警告，或者抛出异常)
-    # 如果 _validate_args 内部有 print，最好加上 if accelerator.is_local_main_process: 
-    # 但由于看不到具体实现，先保留原样，只要它不报错就行
+    # Validate CLI arguments.
     _validate_args(args)
 
     config = GRPOConfig(
@@ -126,7 +123,7 @@ def main() -> None:
         early_stopping_epsilon=args.early_stopping_epsilon,
     )
     
-    # 验证配置
+    # Validate configuration.
     config.validate()
 
     # Display configuration (main process only)

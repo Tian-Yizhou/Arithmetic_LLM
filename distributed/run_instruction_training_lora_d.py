@@ -13,12 +13,6 @@ from accelerate import Accelerator
 def main():
     """Fine-tune instruction model with LoRA from command line."""
     
-    # [新增 2] 初始化 Accelerator
-    # 我们先解析部分参数或者允许 accelerator 稍后初始化，
-    # 但最简单的方法是先把 parser 定义好，解析完 args 后再初始化 accelerator (如果需要 args 参数)
-    # 或者直接在这里初始化 (如果不依赖 args 中的 mixed_precision 等参数)
-    # 按照之前的最佳实践，我们在 parse_args 之后初始化，以便传入 gradient_accumulation_steps
-    
     parser = argparse.ArgumentParser(
         description="Fine-tune arithmetic LLM with LoRA adapters"
     )
@@ -38,7 +32,7 @@ def main():
     parser.add_argument("--gradient-clip", type=float, default=1.0, help="Gradient clipping value (default: 1.0)")
     parser.add_argument("--save-every", type=int, default=500, help="Save checkpoint every N steps (default: 500)")
     
-    # [新增 3] 梯度累积参数
+    # Gradient accumulation.
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1, help="Number of steps to accumulate gradients (default: 1)")
 
     # Early stopping
@@ -46,7 +40,7 @@ def main():
     parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of epochs with insufficient improvement before stopping (default: 3)")
     parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum loss improvement ratio to continue training (default: 1e-4)")
 
-    # [修改] Device 参数保留但忽略
+    # Device argument is kept for CLI compatibility but ignored by Accelerate.
     parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
 
     # LoRA configuration
@@ -61,10 +55,10 @@ def main():
 
     args = parser.parse_args()
 
-    # [新增 4] 在解析完参数后初始化 Accelerator
+    # Initialize Accelerator after parsing args to use gradient_accumulation_steps.
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision="fp16" # 建议默认开启混合精度，LoRA 非常适合
+        mixed_precision="fp16"
     )
 
     # Load or create training configuration
@@ -73,7 +67,7 @@ def main():
             print(f"Loading training configuration from: {args.config}")
         config = TrainingConfig.from_json(args.config)
     else:
-        # [修改] 移除 device 检测逻辑，传入 gradient_accumulation_steps
+        # Create training config from CLI arguments.
         config = TrainingConfig(
             learning_rate=args.learning_rate,
             batch_size=args.batch_size,
@@ -85,7 +79,6 @@ def main():
             early_stopping=args.early_stopping,
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_epsilon=args.early_stopping_epsilon,
-            # device=device <-- 删除
         )
 
     target_modules = [
@@ -106,7 +99,7 @@ def main():
         with open(args.model_config, 'r') as f:
             model_config = json.load(f)
 
-    # [修改] Display configuration - 只在主进程打印
+    # Display configuration (main process only).
     if accelerator.is_local_main_process:
         print("\n" + "=" * 60)
         print("LORA INSTRUCTION FINE-TUNING (Accelerated)")
@@ -132,7 +125,7 @@ def main():
 
     # Train model
     try:
-        # [修改] 传入 accelerator 对象
+        # Train the model.
         adapter_path = train_instruction_model_lora(
             instruction_corpus_path=args.instruction_corpus_path,
             tokenizer_path=args.tokenizer_path,
@@ -142,7 +135,7 @@ def main():
             lora_config=lora_config,
             model_config=model_config,
             save_merged_model=args.save_merged_model,
-            accelerator=accelerator # <--- 关键修改
+            accelerator=accelerator
         )
 
         if accelerator.is_local_main_process:

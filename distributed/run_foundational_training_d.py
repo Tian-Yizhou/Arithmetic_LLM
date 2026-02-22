@@ -1,7 +1,7 @@
 import argparse
 import json
 import torch
-from accelerate import Accelerator  # [新增 1]
+from accelerate import Accelerator
 from configs.training_config_d import TrainingConfig
 from training.train_foundational_d import train_foundational_model
 
@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--gradient-clip", type=float, default=1.0, help="Gradient clipping value (default: 1.0)")
     parser.add_argument("--save-every", type=int, default=1000, help="Save checkpoint every N steps (default: 1000)")
     
-    # [新增 3] 梯度累积参数
+    # Gradient accumulation.
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1, help="Number of steps to accumulate gradients (default: 1)")
 
     # Early stopping
@@ -39,8 +39,7 @@ def main():
     parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of epochs with insufficient improvement before stopping (default: 3)")
     parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum loss improvement ratio to continue training (default: 1e-4)")
 
-    # [修改 4] Device 参数通常不再需要，accelerate 会自动处理。
-    # 但为了兼容性可以保留，只是在代码里忽略它。
+    # Device argument is kept for CLI compatibility but ignored by Accelerate.
     parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
     
     # Model configuration
@@ -56,13 +55,12 @@ def main():
     
     # Load or create training configuration
     if args.config:
-        # [修改 5] 只在主进程打印
+        # Print only on main process.
         if accelerator.is_local_main_process:
             print(f"Loading training configuration from: {args.config}")
         config = TrainingConfig.from_json(args.config)
     else:
-        # [修改 6] 移除 device 判断逻辑，直接使用 TrainingConfig
-        # 并传入新增的 gradient_accumulation_steps
+        # Create training config from CLI arguments.
         config = TrainingConfig(
             learning_rate=args.learning_rate,
             batch_size=args.batch_size,
@@ -74,7 +72,6 @@ def main():
             early_stopping=args.early_stopping,
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_epsilon=args.early_stopping_epsilon,
-            # device=...  <-- 不再传递 device
         )
     
     # Load or create model configuration
@@ -93,7 +90,7 @@ def main():
             'max_seq_length': args.max_seq_length
         }
     
-    # [修改 7] Display configuration - 只在主进程打印
+    # Display configuration (main process only).
     if accelerator.is_local_main_process:
         print("\n" + "=" * 60)
         print("FOUNDATIONAL MODEL TRAINING (Accelerated)")
@@ -109,7 +106,6 @@ def main():
         print(f"  Gradient clip: {config.gradient_clip}")
         print(f"  Gradient accumulation: {config.gradient_accumulation_steps}")
         print(f"  Save every: {config.save_every} steps")
-        # print(f"  Device: {config.device}") <-- 删除
         print("\nModel Configuration:")
         print(f"  d_model: {model_config['d_model']}")
         print(f"  nhead: {model_config['nhead']}")
@@ -129,7 +125,7 @@ def main():
             model_config=model_config
         )
         
-        # 成功信息也只在主进程打印
+        # Print success message on main process only.
         if accelerator.is_local_main_process:
             print("\n" + "=" * 60)
             print("TRAINING COMPLETED SUCCESSFULLY!")
@@ -138,7 +134,7 @@ def main():
             print("=" * 60)
             
     except Exception as e:
-        # 错误信息最好都打印出来，方便定位是哪个进程挂了
+        # Print errors on all processes to help identify which one failed.
         print(f"\n[Process {accelerator.process_index}] TRAINING FAILED!")
         print(f"Error: {str(e)}")
         raise

@@ -36,11 +36,11 @@ def train_instruction_model(
 ) -> str:
     """Fine-tune model with instruction formatting."""
 
-    # [保险起见] 检查一下传进来了没
+    # Require an Accelerator instance for distributed training.
     if accelerator is None:
         raise ValueError("Accelerator must be passed from main!")
 
-    # [修改 2] 所有的文件操作和打印都只在主进程执行
+    # File I/O and logging happen on the main process only.
     if accelerator.is_local_main_process:
         # Validate configuration
         config.validate()
@@ -54,7 +54,7 @@ def train_instruction_model(
         print(f"Configuration: {config.to_dict()}")
         print("Loading tokenizer...")
 
-    # Load tokenizer (所有进程都需要)
+    # Load tokenizer on all processes.
     tokenizer = ArithmeticBPETokenizer()
     tokenizer.load(tokenizer_path)
     vocab_size = len(tokenizer.token2id)
@@ -63,8 +63,8 @@ def train_instruction_model(
         print(f"Tokenizer vocabulary size: {vocab_size}")
         print("Initializing model architecture...")
 
-    # Load checkpoint metadata to get config
-    # map_location='cpu' 很重要，防止多进程抢占 GPU 0
+    # Load checkpoint metadata to get config.
+    # map_location='cpu' prevents all processes from crowding GPU 0.
     checkpoint_data = torch.load(foundational_checkpoint, map_location='cpu')
     
     if model_config is None:
@@ -113,24 +113,19 @@ def train_instruction_model(
     # Initialize model
     model = ArithmeticTransformer(**model_config)
     
-    # [修改 3] 加载权重
-    # 注意：我们在 prepare 之前加载权重，这是最安全的做法。
-    # accelerate 会自动把加载好权重的模型搬到对应的 GPU 上。
+    # Load weights before prepare() — Accelerate will move the model
+    # to the correct device automatically.
     if accelerator.is_local_main_process:
         print(f"Loading foundational model from: {foundational_checkpoint}")
         
     checkpoint_metadata = load_checkpoint(
         checkpoint_path=foundational_checkpoint,
         model=model
-        # 注意：load_checkpoint 内部如果有 .to(device) 最好去掉，或者确保 map_location='cpu'
     )
     
     if accelerator.is_local_main_process:
         print(f"Loaded checkpoint from epoch {checkpoint_metadata['epoch']}, "
               f"step {checkpoint_metadata['step']}")
-    
-    # [修改 4] 移除 model.to(config.device)
-    # model = model.to(config.device)  <-- DELETE
     
     # Initialize optimizer
     optimizer = torch.optim.AdamW(
@@ -141,21 +136,18 @@ def train_instruction_model(
         weight_decay=0.01
     )
     
-    # [修改 5] 第一阶段 Prepare：模型、优化器、数据
+    # Prepare model, optimizer, and dataloaders for distributed training.
     model, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, val_dataloader
     )
     
-    # [modified] Calculate total training steps
+    # Calculate total training steps (update steps, not micro-batches).
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accelerator.gradient_accumulation_steps)
     total_steps = num_update_steps_per_epoch * config.num_epochs
-    
-    # 动态计算 warmup
-    warmup_ratio = 0.05 # 5% 的步数用于热身
-    calculated_warmup_steps = int(total_steps * warmup_ratio)
 
-    # 确保至少有一点热身，且不超过 config 的硬性限制（如果有的话）
-    real_warmup_steps = calculated_warmup_steps
+    # Use 5% of total steps for learning rate warmup.
+    warmup_ratio = 0.05
+    real_warmup_steps = int(total_steps * warmup_ratio)
     
     # Initialize scheduler
     scheduler = get_linear_schedule_with_warmup(
@@ -164,10 +156,10 @@ def train_instruction_model(
         num_training_steps=total_steps
     )
     
-    # [修改 7] 第二阶段 Prepare：Scheduler
+    # Prepare scheduler for distributed training.
     scheduler = accelerator.prepare(scheduler)
     
-    # Save configuration (主进程)
+    # Save configuration (main process only).
     if accelerator.is_local_main_process:
         config.to_json(os.path.join(output_dir, 'training_config.json'))
         with open(os.path.join(output_dir, 'model_config.json'), 'w') as f:
@@ -190,7 +182,7 @@ def train_instruction_model(
             print(f"Epoch {epoch + 1}/{config.num_epochs}")
             print(f"{'='*60}")
         
-        # [修改 8] 传入 accelerator 到 train_epoch
+        # Train one epoch.
         train_loss, global_step = train_epoch(
             model=model,
             train_dataloader=train_dataloader,
@@ -201,10 +193,10 @@ def train_instruction_model(
             global_step=global_step,
             output_dir=output_dir,
             tokenizer_vocab_size=vocab_size,
-            accelerator=accelerator # Pass accelerator
+            accelerator=accelerator
         )
-        
-        # [修改 9] 传入 accelerator 到 evaluate
+
+        # Evaluate on validation set.
         if accelerator.is_local_main_process:
             print("\nEvaluating on validation set...")
         val_loss = evaluate(model, val_dataloader, config, accelerator)
@@ -225,7 +217,7 @@ def train_instruction_model(
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 
-                # [modified] unwrap model and save
+                # Unwrap model to get raw state dict for saving.
                 unwrapped_model = accelerator.unwrap_model(model)
                 
                 best_checkpoint_path = save_checkpoint(
@@ -266,7 +258,7 @@ def train_instruction_model(
 
         prev_val_loss = val_loss
 
-        # wait for all processes to finish epoch before next epoch
+        # Wait for all processes to finish before next epoch.
         accelerator.wait_for_everyone()
 
         if early_stopped:

@@ -72,19 +72,19 @@ def train_grpo_model(
     num_range: Tuple[int, int] = (1, 20),
     filter_invalid_instruction: bool = True,
     candidate_sub_batch_size: Optional[int] = None,
-    accelerator: Accelerator = None  # [修改 1] 传入 Accelerator
+    accelerator: Accelerator = None
 ) -> Dict[str, Any]:
     """Train GRPO model using instruction corpus or generated data."""
     
-    # [安全检查]
+    # Require an Accelerator instance for distributed training.
     if accelerator is None:
         raise ValueError("Accelerator must be passed from main script!")
 
     tokenizer = ArithmeticBPETokenizer()
     tokenizer.load(tokenizer_path)
 
-    # [修改 2] 统一路径名，但只在主进程创建
-    # 去掉微秒(%f)，防止不同进程生成的时间戳不一致导致文件夹名不同步
+    # Use a timestamp without microseconds so all processes agree on the
+    # same output directory name.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(output_dir, f"grpo_{timestamp}")
     
@@ -92,17 +92,16 @@ def train_grpo_model(
         os.makedirs(output_dir, exist_ok=True)
         print(f"GRPO output directory: {output_dir}")
 
-    # [修改 3] 将 accelerator 传递给 GRPOTrainer
-    # 你需要确保 GRPOTrainer 的 __init__ 方法能接收 accelerator 参数
+    # Initialize the GRPO trainer with the Accelerator instance.
     trainer = GRPOTrainer(
         config=config,
         sft_checkpoint_path=sft_checkpoint_path,
         tokenizer=tokenizer,
         candidate_sub_batch_size=candidate_sub_batch_size,
-        accelerator=accelerator  # <--- 传入
+        accelerator=accelerator
     )
 
-    # 加载数据
+    # Load training data.
     if data_mode == "instruction":
         if instruction_corpus_path is None:
             raise ValueError("instruction_corpus_path required for instruction mode")
@@ -119,9 +118,8 @@ def train_grpo_model(
     if not pairs:
         raise ValueError("No training pairs available")
 
-    # [修改 4] 关键步骤：手动切分数据 (Data Sharding)
-    # 这一步模拟了 DistributedSampler 的功能
-    # pairs 是一个列表，我们让每个 GPU 只取自己那一份
+    # Manual data sharding: each process takes every N-th item (like
+    # DistributedSampler) so each GPU trains on its own data slice.
     total_data_size = len(pairs)
     pairs = pairs[accelerator.process_index::accelerator.num_processes]
     
@@ -129,16 +127,14 @@ def train_grpo_model(
         print(f"Total data size: {total_data_size}")
         print(f"Data size on this device: {len(pairs)}")
 
-    # [修改 5] 重新计算 Steps
-    # 因为 pairs 变短了（只剩本地数据），这里的 steps 计算是准确的本地步数
+    # Recompute total steps based on the local (sharded) data size.
     total_steps = math.ceil(len(pairs) / config.batch_size) * config.num_epochs
     trainer.reset_optimizer_and_scheduler(total_steps=total_steps)
 
-    # 生成本地的 Batch 列表
+    # Build local batch list.
     train_dataloader = list(_batch_iter(pairs, config.batch_size))
     
-    # 开始训练
-    # 注意：trainer.train 内部也需要适配 accelerator.backward 等逻辑
+    # Start training.
     return trainer.train(train_dataloader, output_dir=output_dir)
 
 

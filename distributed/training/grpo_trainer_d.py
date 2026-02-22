@@ -38,15 +38,14 @@ class GRPOTrainer:
         total_steps: Optional[int] = None,
         use_mixed_precision: bool = False,
         candidate_sub_batch_size: Optional[int] = None,
-        accelerator: Accelerator = None  # [修改] 新增接收 accelerator
+        accelerator: Accelerator = None
     ):
         self.config = config
         self.tokenizer = tokenizer
 
-        warmup_ratio = 0.05 # 5% 的步数用于热身
-        
-        
-        # [修改] 必须接收 accelerator
+        warmup_ratio = 0.05
+
+        # Require an Accelerator instance for distributed training.
         if accelerator is None:
             raise ValueError("Accelerator must be provided to GRPOTrainer")
         self.accelerator = accelerator
@@ -56,11 +55,11 @@ class GRPOTrainer:
         self.optimizer = None
         self.scheduler = None
         self.verifier = ArithmeticVerifier()
-        self.use_mixed_precision = use_mixed_precision # Accelerate 也会通过 mixed_precision="fp16" 控制
+        self.use_mixed_precision = use_mixed_precision
         self.candidate_sub_batch_size = candidate_sub_batch_size
         
-        # [修改] 删除手动的 GradScaler，Accelerate 会自动处理
-        self._scaler = None 
+        # GradScaler is handled automatically by Accelerate.
+        self._scaler = None
 
         if self.tokenizer is None and tokenizer_path is not None:
             self.tokenizer = ArithmeticBPETokenizer()
@@ -73,9 +72,8 @@ class GRPOTrainer:
         if self.reference_model is not None:
             self._freeze_reference_model()
 
-        # [修改] 初始化 Optimizer 和 Scheduler
+        # Initialize optimizer and scheduler (device placement is done by prepare()).
         if self.policy_model is not None:
-            # 注意：此时不要手动 .to(device)，prepare 会做
             params = list(self.policy_model.parameters())
             if params:
                 self.optimizer = torch.optim.AdamW(
@@ -93,8 +91,8 @@ class GRPOTrainer:
                         num_training_steps=max(1, total_steps)
                     )
 
-        # [修改] 核心步骤：使用 Accelerate Prepare
-        # 注意：Reference Model 也建议 prepare，以支持 FSDP/DeepSpeed 分片，尽管它不参与训练
+        # Prepare all models, optimizer, and scheduler for distributed training.
+        # The reference model is also prepared to support FSDP/DeepSpeed sharding.
         self.policy_model, self.optimizer, self.scheduler, self.reference_model = self.accelerator.prepare(
             self.policy_model, self.optimizer, self.scheduler, self.reference_model
         )
@@ -153,12 +151,10 @@ class GRPOTrainer:
 
     def reset_optimizer_and_scheduler(self, total_steps: Optional[int] = None) -> None:
         """Re-initialize optimizer/scheduler and prepare them."""
-        # 注意：如果中途重置，需要重新 prepare 新的对象
-        # 但通常建议在 __init__ 里就搞定。如果必须重置，记得 unwap -> re-init -> prepare
         if self.policy_model is None:
             raise ValueError("policy_model must be initialized")
         
-        # 获取原始模型参数（如果已经被 wrap 过了）
+        # Get parameters from the unwrapped model.
         unwrapped_model = self.accelerator.unwrap_model(self.policy_model)
         
         self.optimizer = torch.optim.AdamW(
@@ -169,8 +165,8 @@ class GRPOTrainer:
             weight_decay=0.01
         )
         if total_steps is not None:
-            # 动态计算 warmup
-            warmup_ratio = 0.05 # 5% 的步数用于热身
+            # Use 5% of total steps for learning rate warmup.
+            warmup_ratio = 0.05
             real_warmup_steps = int(total_steps * warmup_ratio)
             self.scheduler = get_linear_schedule_with_warmup(
                 optimizer=self.optimizer,
@@ -178,8 +174,7 @@ class GRPOTrainer:
                 num_training_steps=max(1, total_steps)
             )
         
-        # [修改] 重新 Prepare 优化器和调度器
-        # 注意：policy_model 不需要重新 prepare，除非你把它也换了
+        # Re-prepare optimizer and scheduler after re-initialization.
         self.optimizer, self.scheduler = self.accelerator.prepare(self.optimizer, self.scheduler)
 
     def memory_usage_estimate(
@@ -352,7 +347,7 @@ class GRPOTrainer:
                 attention_masks, dtype=torch.float32, device=device
             )
 
-            # [modified] use accelerator.autocast to substitute torch.amp.autocast
+            # Use accelerator.autocast() for automatic mixed precision.
             with self.accelerator.autocast():
                 policy_logits = self._forward_model(
                     self.policy_model, input_tensor, attention_mask=attention_mask
@@ -421,21 +416,21 @@ class GRPOTrainer:
         total_loss = self.compute_total_loss(policy_loss, kl_divergence)
         scaled_loss = total_loss * loss_scale
 
-        # [modified] use accelerator.backward to substitute scaler.scale().backward()
+        # Use accelerator.backward() for distributed backward pass.
         self.accelerator.backward(scaled_loss)
 
         if do_step:
             if self.config.device == "cuda":
                 torch.cuda.empty_cache()
             
-            # [modified] use Accelerator Clip Grad
+            # Clip gradients using Accelerator.
             if self.config.gradient_clip > 0:
                 self.accelerator.clip_grad_norm_(
                     self.policy_model.parameters(),
                     self.config.gradient_clip
                 )
             
-            # [modified] simplify step and zero_grad since Accelerator handles scaling and unscaling internally
+            # Accelerator handles loss scaling/unscaling internally.
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
             
@@ -539,7 +534,7 @@ class GRPOTrainer:
 
                 val_metrics = None
                 if (batch_idx + 1) % accum_steps == 0:
-                    # [modified] use Accelerator Clip and Step
+                    # Clip gradients and perform optimizer step.
                     if self.config.gradient_clip > 0:
                         self.accelerator.clip_grad_norm_(
                             self.policy_model.parameters(),
@@ -569,7 +564,7 @@ class GRPOTrainer:
                         val_metrics = self.evaluate(val_dataloader)
 
 
-                        # [modified] only save best model on the main process
+                        # Save best model on main process only.
                         if self.accelerator.is_local_main_process:
                              if val_metrics["reward_rate"] > best_reward_rate:
                                 best_reward_rate = val_metrics["reward_rate"]
@@ -665,7 +660,7 @@ class GRPOTrainer:
             is_final=True
         )
 
-        # [modified] only write json on the main process
+        # Write training log and summary on main process only.
         log_path = ""
         summary_path = ""
         if self.accelerator.is_local_main_process:
@@ -673,25 +668,25 @@ class GRPOTrainer:
             with open(log_path, "w") as f:
                 json.dump(training_log, f, indent=2)
             
-            # compute total training time
+            # Compute total training time.
             end_time = time.time()
             total_seconds = end_time - start_time
             hours, rem = divmod(total_seconds, 3600)
             minutes, seconds = divmod(rem, 60)
             formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
             
-            # create summary dict to record key info about the training run
+            # Create summary of the training run.
             summary = {
                 "total_duration_seconds": total_seconds,
                 "total_duration_formatted": formatted_time,
                 "total_epochs": self.config.num_epochs,
                 "total_steps": global_step,
                 "final_checkpoint_path": final_checkpoint_path,
-                # 还可以加上最后的 metrics
+                # Final training metrics.
                 "final_metrics": training_log[-1]["metrics"] if training_log else None
             }
 
-            # save the summary as grpo_training_summary.json
+            # Save training summary.
             summary_path = os.path.join(output_dir, "grpo_training_summary.json")
             with open(summary_path, "w") as f:
                 json.dump(summary, f, indent=2)
@@ -718,7 +713,7 @@ class GRPOTrainer:
     ) -> str:
         """Save GRPO checkpoint with metadata."""
         
-        # [modified] only save on the main process
+        # Only save checkpoints on the main process.
         if not self.accelerator.is_local_main_process:
             return ""
         
@@ -727,7 +722,7 @@ class GRPOTrainer:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        # [modified] Unwrap model
+        # Unwrap model to get raw state dict for saving.
         unwrapped_model = self.accelerator.unwrap_model(self.policy_model)
 
         checkpoint = {
@@ -764,39 +759,36 @@ class GRPOTrainer:
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(checkpoint_path)
 
-        # 加载到 CPU，避免爆显存
+        # Load to CPU to avoid GPU memory contention across processes.
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
-        # 1. 恢复 Policy Model
+        # 1. Restore policy model.
         if self.policy_model is None:
             model_config = checkpoint.get("model_config")
             if model_config is None:
                 raise ValueError("Checkpoint missing model_config")
             self.policy_model = ArithmeticTransformer(**model_config)
-            # 如果是新创建的模型，必须立刻 prepare
+            # Newly created models must be prepared immediately.
             self.policy_model = self.accelerator.prepare(self.policy_model)
 
-        # [修改] 使用 unwrap_model 安全加载权重
-        # 这样无论模型是否被 DDP 包装，都能正确加载不带 "module." 前缀的权重
+        # Unwrap before loading state dict so keys match regardless of
+        # whether the model is wrapped with DDP.
         unwrapped_policy = self.accelerator.unwrap_model(self.policy_model)
         unwrapped_policy.load_state_dict(checkpoint["model_state_dict"])
-        # [修改] 删除 .to(device)，prepare 已经处理了设备
-        # self.policy_model = self.policy_model.to(self.config.device)
-
-        # 2. 恢复 Reference Model
+        # 2. Restore reference model.
         if self.reference_model is None:
             self.reference_model = ArithmeticTransformer(**checkpoint["model_config"])
-            # 新创建的 reference model 也要 prepare
+            # Newly created reference model must be prepared too.
             self.reference_model = self.accelerator.prepare(self.reference_model)
         
-        # Reference Model 也需要解包加载
+        # Unwrap reference model to load weights.
         unwrapped_ref = self.accelerator.unwrap_model(self.reference_model)
         unwrapped_ref.load_state_dict(checkpoint["model_state_dict"])
         self._freeze_reference_model()
 
-        # 3. 恢复 Optimizer
+        # 3. Restore optimizer.
         if self.optimizer is None:
-            # 如果必须在这里重新初始化，记得使用 unwrapped_policy 的参数
+            # Use unwrapped model parameters for the new optimizer.
             self.optimizer = torch.optim.AdamW(
                 unwrapped_policy.parameters(),
                 lr=self.config.learning_rate,
@@ -804,21 +796,21 @@ class GRPOTrainer:
                 eps=1e-8,
                 weight_decay=0.01
             )
-            # 新初始化的 optimizer 必须 prepare
+            # Newly initialized optimizer must be prepared.
             self.optimizer = self.accelerator.prepare(self.optimizer)
             
         if checkpoint.get("optimizer_state_dict"):
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-        # 4. 恢复 Scheduler
+        # 4. Restore scheduler.
         if checkpoint.get("scheduler_state_dict") and self.optimizer is not None:
             if self.scheduler is None:
                 self.scheduler = get_linear_schedule_with_warmup(
                     optimizer=self.optimizer,
                     num_warmup_steps=self.config.warmup_steps,
-                    num_training_steps=1 # 这里的 steps 只是占位，稍后 trainer.reset.. 会重置
+                    num_training_steps=1  # Placeholder; reset_optimizer_and_scheduler() sets the real value.
                 )
-                # 新初始化的 scheduler 必须 prepare
+                # Newly initialized scheduler must be prepared.
                 self.scheduler = self.accelerator.prepare(self.scheduler)
                 
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
@@ -850,7 +842,7 @@ class GRPOTrainer:
             if prompts is None or ground_truth is None:
                 raise ValueError("batch must contain prompts and ground_truth")
 
-            # generate_candidates 内部已经适配了 accelerator
+            # generate_candidates() is already Accelerator-aware.
             generated_texts, _ = self.generate_candidates(prompts, num_candidates=1)
             
             for idx, prompt in enumerate(prompts):
@@ -859,13 +851,11 @@ class GRPOTrainer:
                 local_correct += 1 if reward > 0.5 else 0
                 local_total += 1
 
-        # [修改] 汇总所有 GPU 的结果
-        # 将本地统计量转换为 Tensor 并放到当前设备上
+        # Aggregate evaluation results across all GPUs.
         device = self.accelerator.device
         stats_tensor = torch.tensor([local_correct, local_total], device=device)
         
-        # 使用 gather (或者 reduce) 汇总所有进程的数据
-        # reduce 默认是 sum，正好符合我们的需求
+        # Sum local counts across all processes via reduce.
         gathered_stats = self.accelerator.reduce(stats_tensor, reduction="sum")
         
         global_correct = gathered_stats[0].item()
@@ -908,7 +898,7 @@ class GRPOTrainer:
         if not prompts:
             return [], []
 
-        # [修改 1] 使用 accelerator.device，更加稳健
+        # Use accelerator.device for robust device placement.
         device = self.accelerator.device
         
         bos_id = self.tokenizer.token2id.get("<bos>", 0)
@@ -951,8 +941,7 @@ class GRPOTrainer:
         self.policy_model.eval()
         with torch.no_grad():
             while input_ids.shape[1] < effective_max_len:
-                # [修改 2] 使用 accelerator.autocast() 替代 torch.amp.autocast
-                # 移除了手动的 device_type 判断
+                # Use accelerator.autocast() for automatic mixed precision.
                 with self.accelerator.autocast():
                     logits = self._forward_model(
                         self.policy_model, input_ids, attention_mask=attention_mask
@@ -1052,12 +1041,11 @@ class GRPOTrainer:
 
         prompt_len = input_ids.shape[1]
         
-        # 确保返回的 tensor 在正确的设备上
+        # Return zero for degenerate sequences.
         if generated_ids.shape[1] <= 1:
             return torch.tensor(0.0, device=generated_ids.device)
 
-        # [修改] 使用 accelerator.autocast()
-        # 这一步是为了确保如果开启了 fp16，这里的前向传播也用 fp16，避免类型不匹配错误
+        # Use accelerator.autocast() to match the mixed-precision dtype.
         with self.accelerator.autocast():
             logits = self.policy_model(generated_ids[:, :-1])
             

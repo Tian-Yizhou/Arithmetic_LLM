@@ -61,19 +61,17 @@ def train_instruction_model_lora(
     lora_config: Optional[LoRAConfig] = None,
     model_config: Optional[Dict] = None,
     save_merged_model: bool = False,
-    accelerator: Accelerator = None  # [修改 1] 新增参数
+    accelerator: Accelerator = None
 ) -> str:
     """Fine-tune model with LoRA on instruction-formatted data."""
 
-    # [修改 1] 在函数最开始记录开始时间
     start_time = time.time()
-    
-    # [安全检查] 确保 accelerator 被传入
+
+    # Require an Accelerator instance for distributed training.
     if accelerator is None:
         raise ValueError("Accelerator must be passed from main script!")
 
-    # Validate configuration
-    # 验证逻辑所有进程都跑一遍没坏处，或者只在主进程跑
+    # Validate configuration.
     config.validate()
 
     if lora_config is None:
@@ -85,7 +83,7 @@ def train_instruction_model_lora(
     lora_config.validate()
     config.lora_config = lora_config
 
-    # [修改 2] 目录创建只在主进程
+    # Directory creation and logging on main process only.
     if accelerator.is_local_main_process:
         # Create unique output directory with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -96,7 +94,7 @@ def train_instruction_model_lora(
         print(f"Training configuration: {config.to_dict()}")
         print("Loading tokenizer...")
 
-    # Load tokenizer (所有进程都需要)
+    # Load tokenizer on all processes.
     tokenizer = ArithmeticBPETokenizer()
     tokenizer.load(tokenizer_path)
     vocab_size = len(tokenizer.token2id)
@@ -159,22 +157,17 @@ def train_instruction_model_lora(
     checkpoint_metadata = load_checkpoint(
         checkpoint_path=foundational_checkpoint,
         model=model
-        # 确保 load_checkpoint 内部没有 .to(device) 操作
     )
     
     if accelerator.is_local_main_process:
         print(f"Loaded checkpoint from epoch {checkpoint_metadata['epoch']}, "
               f"step {checkpoint_metadata['step']}")
 
-    # Inject LoRA and freeze parameters
-    # [注意] 这些操作在 prepare 之前做是安全的，所有进程都会执行
+    # Inject LoRA adapters and freeze base parameters before prepare().
     model.inject_lora(lora_config)
     freeze_non_lora_parameters(model)
 
-    # [修改 3] 移除 model.to(device)
-    # model = model.to(config.device) <--- DELETE
-
-    # Count parameters (只在主进程打印)
+    # Display parameter statistics (main process only).
     if accelerator.is_local_main_process:
         stats = get_parameter_stats(model)
         print(f"Total parameters: {stats['total']:,}")
@@ -182,25 +175,21 @@ def train_instruction_model_lora(
         print(f"Frozen parameters: {stats['frozen']:,}")
         print(f"Trainable percentage: {stats['trainable_pct']:.2f}%")
 
-    # Initialize optimizer
-    # 确保 create_lora_optimizer 能处理参数已经被过滤过的情况
+    # Initialize optimizer for LoRA parameters only.
     optimizer = create_lora_optimizer(model, config)
 
-    # [修改 4] 第一阶段 Prepare
+    # Prepare model, optimizer, and dataloaders for distributed training.
     model, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, val_dataloader
     )
 
-    # [modified] Calculate total training steps
+    # Calculate total training steps (update steps, not micro-batches).
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accelerator.gradient_accumulation_steps)
     total_steps = num_update_steps_per_epoch * config.num_epochs
-    
-    # 动态计算 warmup
-    warmup_ratio = 0.05 # 5% 的步数用于热身
-    calculated_warmup_steps = int(total_steps * warmup_ratio)
 
-    # 确保至少有一点热身，且不超过 config 的硬性限制（如果有的话）
-    real_warmup_steps = calculated_warmup_steps
+    # Use 5% of total steps for learning rate warmup.
+    warmup_ratio = 0.05
+    real_warmup_steps = int(total_steps * warmup_ratio)
 
     # Initialize scheduler
     scheduler = get_linear_schedule_with_warmup(
@@ -209,10 +198,10 @@ def train_instruction_model_lora(
         num_training_steps=total_steps
     )
     
-    # [修改 6] 第二阶段 Prepare Scheduler
+    # Prepare scheduler for distributed training.
     scheduler = accelerator.prepare(scheduler)
 
-    # Save configuration (主进程)
+    # Save configuration (main process only).
     if accelerator.is_local_main_process:
         config.to_json(os.path.join(output_dir, 'training_config.json'))
         with open(os.path.join(output_dir, 'model_config.json'), 'w') as f:
@@ -235,7 +224,7 @@ def train_instruction_model_lora(
             print(f"Epoch {epoch + 1}/{config.num_epochs}")
             print(f"{'='*60}")
 
-        # [修改 7] 传递 accelerator
+        # Train one epoch.
         train_loss, global_step = train_epoch(
             model=model,
             train_dataloader=train_dataloader,
@@ -246,10 +235,10 @@ def train_instruction_model_lora(
             global_step=global_step,
             output_dir=output_dir,
             tokenizer_vocab_size=vocab_size,
-            accelerator=accelerator # Pass accelerator
+            accelerator=accelerator
         )
 
-        # [修改 8] 传递 accelerator
+        # Evaluate on validation set.
         if accelerator.is_local_main_process:
             print("\nEvaluating on validation set...")
         val_loss = evaluate(model, val_dataloader, config, accelerator)
@@ -272,8 +261,7 @@ def train_instruction_model_lora(
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 
-                # [修改 9] 解包模型 (Unwrap)
-                # 只有解包后，save_checkpoint 才能正确处理
+                # Unwrap model to get raw state dict for saving.
                 unwrapped_model = accelerator.unwrap_model(model)
                 
                 best_checkpoint_path = save_checkpoint(
@@ -289,7 +277,7 @@ def train_instruction_model_lora(
                     is_final=False
                 )
                 
-                # 重命名
+                # Rename to best_model.pt.
                 best_model_path = os.path.join(output_dir, 'best_model.pt')
                 if os.path.exists(best_model_path):
                     os.remove(best_model_path)
@@ -316,21 +304,21 @@ def train_instruction_model_lora(
 
         prev_val_loss = val_loss
 
-        # [修改 10] 等待同步
+        # Wait for all processes before next epoch.
         accelerator.wait_for_everyone()
 
         if early_stopped:
             break
 
     # Save final model
-    accelerator.wait_for_everyone() # 确保所有进程都跑完了
+    accelerator.wait_for_everyone()
 
-    adapter_path = "" # 初始化返回值，防止非主进程报错
+    adapter_path = ""
     
     if accelerator.is_local_main_process:
         print("\nSaving final fine-tuned model checkpoint...")
         
-        # [修改 11] 解包模型
+        # Unwrap model for saving.
         unwrapped_model = accelerator.unwrap_model(model)
         
         final_checkpoint_path = save_checkpoint(
@@ -347,9 +335,7 @@ def train_instruction_model_lora(
         )
         print(f"Final model checkpoint saved: {final_checkpoint_path}")
 
-        # Save LoRA adapters separately
-        # [修改 12] 调用 LoRA 特有的保存方法
-        # 因为我们已经 unwrapped 了，所以可以直接调用 save_lora_adapters
+        # Save LoRA adapters separately.
         adapter_path = os.path.join(output_dir, 'lora_adapter.pt')
         if hasattr(unwrapped_model, 'save_lora_adapters'):
             unwrapped_model.save_lora_adapters(adapter_path, base_model_path=foundational_checkpoint)
@@ -377,11 +363,11 @@ def train_instruction_model_lora(
             else:
                 print("Warning: Model does not have 'merge_lora_weights' method.")
 
-        # [修改 2] 计算总耗时并添加到 summary 中
+        # Compute total training duration.
         end_time = time.time()
         total_seconds = end_time - start_time
         
-        # 格式化时间为 "HH:MM:SS"
+        # Format duration as HH:MM:SS.
         hours, rem = divmod(total_seconds, 3600)
         minutes, seconds = divmod(rem, 60)
         formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
@@ -405,7 +391,7 @@ def train_instruction_model_lora(
             'foundational_checkpoint': foundational_checkpoint,
             'lora_adapter_path': adapter_path,
             'merged_model_path': merged_model_path,
-            # add training duration to summary
+            # Training duration.
             'training_duration_seconds': total_seconds,
             'training_duration_formatted': formatted_time
         }
@@ -415,7 +401,7 @@ def train_instruction_model_lora(
             json.dump(summary, f, indent=2)
         print(f"Training summary saved: {summary_path}")
         
-        # print training duration
+        # Print training duration.
         print(f"Total training time: {formatted_time}")
 
         print("\n" + "="*60)
