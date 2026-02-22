@@ -45,11 +45,18 @@ class LoRALayer(nn.Module):
         self.rank = rank
         self.alpha = float(alpha)
         self.dropout = float(dropout)
+        # LoRA scaling factor: controls the magnitude of the low-rank update
+        # relative to the base layer output.
         self.scaling = self.alpha / self.rank
 
+        # Freeze base layer weights so only LoRA parameters are trained.
         for param in self.base_layer.parameters():
             param.requires_grad = False
 
+        # Low-rank decomposition: W' = W + (B @ A) * scaling
+        # A is (rank x in_features), B is (out_features x rank).
+        # B is initialized to zeros so the LoRA contribution is zero at the
+        # start of training, preserving the pretrained model's behavior.
         self.lora_A = nn.Parameter(
             torch.empty(rank, self.base_layer.in_features)
         )
@@ -70,6 +77,9 @@ class LoRALayer(nn.Module):
         if self.lora_dropout is not None:
             lora_input = self.lora_dropout(lora_input)
 
+        # Compute low-rank update: (x @ A^T @ B^T) * scaling
+        # Equivalent to x @ (B @ A)^T * scaling, but computed in two steps
+        # to keep intermediate tensors small (rank << d_model).
         lora_update = torch.matmul(lora_input, self.lora_A.t())
         lora_update = torch.matmul(lora_update, self.lora_B.t())
         lora_update = lora_update * self.scaling

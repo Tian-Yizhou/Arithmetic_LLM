@@ -57,7 +57,8 @@ for batch_size in batch_sizes:
         attention_mask = torch.ones(batch_size, seq_length, device=device)
         labels = torch.randint(0, vocab_size, (batch_size, seq_length), device=device)
         
-        # Warmup
+        # Warmup: run a few untimed iterations so that GPU kernels are
+        # compiled/cached and memory is allocated before measurement.
         model.train()
         for _ in range(2):
             inputs = input_ids[:, :-1]
