@@ -43,7 +43,7 @@ class GRPOTrainer:
         self.tokenizer = tokenizer
 
         warmup_ratio = 0.05 # 5% 的步数用于热身
-        real_warmup_steps = int(total_steps * warmup_ratio)
+        
         
         # [修改] 必须接收 accelerator
         if accelerator is None:
@@ -85,6 +85,7 @@ class GRPOTrainer:
                     weight_decay=0.01
                 )
                 if total_steps is not None:
+                    real_warmup_steps = int(total_steps * warmup_ratio)
                     self.scheduler = get_linear_schedule_with_warmup(
                         optimizer=self.optimizer,
                         num_warmup_steps=real_warmup_steps,
@@ -314,6 +315,10 @@ class GRPOTrainer:
                 rewards_list.append(float(reward))
 
                 generated_ids = self.tokenizer.encode(text, add_special_tokens=True)
+                # Truncate to model's max_seq_length to prevent positional embedding overflow
+                unwrapped = self.accelerator.unwrap_model(self.policy_model)
+                if hasattr(unwrapped, 'max_seq_length') and len(generated_ids) > unwrapped.max_seq_length:
+                    generated_ids = generated_ids[:unwrapped.max_seq_length]
                 flat_generated_ids.append(generated_ids)
                 flat_prompt_lens.append(prompt_len)
 
@@ -929,9 +934,18 @@ class GRPOTrainer:
         finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
         log_probs_lists: List[List[torch.Tensor]] = [[] for _ in range(batch_size)]
 
+        # Clamp generation length to model's max_seq_length to avoid
+        # positional embedding overflow when sequences are re-encoded
+        # with special tokens in train_step.
+        unwrapped = self.accelerator.unwrap_model(self.policy_model)
+        if hasattr(unwrapped, 'max_seq_length'):
+            effective_max_len = min(max_gen_length, unwrapped.max_seq_length - 2)
+        else:
+            effective_max_len = max_gen_length
+
         self.policy_model.eval()
         with torch.no_grad():
-            while input_ids.shape[1] < max_gen_length:
+            while input_ids.shape[1] < effective_max_len:
                 # [修改 2] 使用 accelerator.autocast() 替代 torch.amp.autocast
                 # 移除了手动的 device_type 判断
                 with self.accelerator.autocast():

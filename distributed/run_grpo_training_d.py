@@ -129,25 +129,71 @@ def main() -> None:
     # 验证配置
     config.validate()
 
-    # [新增 2] 如果你想打印配置信息，只在主进程打印
+    # Display configuration (main process only)
     if accelerator.is_local_main_process:
-        print(f"GRPO Training Configuration loaded.")
-        # print(config) # 可选：打印详细配置
+        print("\n" + "=" * 60)
+        print("GRPO TRAINING (Accelerated)")
+        print("=" * 60)
+        print(f"\nData mode: {args.data_mode}")
+        if args.instruction_corpus:
+            print(f"Instruction corpus: {args.instruction_corpus}")
+        print(f"Tokenizer: {args.tokenizer}")
+        print(f"SFT checkpoint: {args.sft_checkpoint}")
+        print(f"Output directory: {args.output_dir}")
+        print("\nTraining Configuration:")
+        print(f"  Learning rate: {config.learning_rate}")
+        print(f"  Batch size (per device): {config.batch_size}")
+        print(f"  Epochs: {config.num_epochs}")
+        print(f"  Warmup steps: {config.warmup_steps}")
+        print(f"  Gradient clip: {config.gradient_clip}")
+        print(f"  Gradient accumulation: {config.gradient_accumulation_steps}")
+        print(f"  Save every: {config.save_every} steps")
+        print(f"  Eval every: {config.eval_every} steps")
+        print(f"  Log every: {config.log_every} steps")
+        print("\nGRPO Configuration:")
+        print(f"  Num candidates: {config.num_candidates}")
+        print(f"  Temperature: {config.temperature}")
+        print(f"  Top-k: {config.top_k}")
+        print(f"  Top-p: {config.top_p}")
+        print(f"  KL penalty coef: {config.kl_penalty_coef}")
+        print(f"  Max generation length: {config.max_gen_length}")
+        if config.early_stopping:
+            print("\nEarly Stopping:")
+            print(f"  Patience: {config.early_stopping_patience}")
+            print(f"  Epsilon: {config.early_stopping_epsilon}")
+        print("=" * 60 + "\n")
 
-    train_grpo_model(
-        instruction_corpus_path=args.instruction_corpus,
-        tokenizer_path=args.tokenizer,
-        sft_checkpoint_path=args.sft_checkpoint,
-        output_dir=args.output_dir,
-        config=config,
-        data_mode=args.data_mode,
-        num_samples=args.num_samples,
-        max_depth=args.max_depth,
-        num_range=(args.num_range_min, args.num_range_max),
-        filter_invalid_instruction=args.filter_invalid_instruction,
-        candidate_sub_batch_size=args.candidate_sub_batch_size,
-        accelerator=accelerator,  # [修改 3] 关键：传入 accelerator 对象
-    )
+    # Train model
+    try:
+        result = train_grpo_model(
+            instruction_corpus_path=args.instruction_corpus,
+            tokenizer_path=args.tokenizer,
+            sft_checkpoint_path=args.sft_checkpoint,
+            output_dir=args.output_dir,
+            config=config,
+            data_mode=args.data_mode,
+            num_samples=args.num_samples,
+            max_depth=args.max_depth,
+            num_range=(args.num_range_min, args.num_range_max),
+            filter_invalid_instruction=args.filter_invalid_instruction,
+            candidate_sub_batch_size=args.candidate_sub_batch_size,
+            accelerator=accelerator,
+        )
+
+        if accelerator.is_local_main_process:
+            print("\n" + "=" * 60)
+            print("GRPO TRAINING COMPLETED SUCCESSFULLY!")
+            print("=" * 60)
+            print(f"Total steps: {result.get('global_step', 'N/A')}")
+            print(f"Final checkpoint: {result.get('final_checkpoint_path', 'N/A')}")
+            if result.get('log_path'):
+                print(f"Training log: {result['log_path']}")
+            print("=" * 60)
+
+    except Exception as e:
+        print(f"\n[Process {accelerator.process_index}] GRPO TRAINING FAILED!")
+        print(f"Error: {str(e)}")
+        raise
 
 
 if __name__ == "__main__":
