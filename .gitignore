@@ -212,3 +212,7 @@ CLAUDE.md
 
 # data
 models/
+
+# macOS
+# .DS_Store under any directory
+.DS_Store
