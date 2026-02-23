@@ -59,6 +59,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping based on reward_rate improvement ratio")
     parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of evaluations with insufficient improvement before stopping (default: 3)")
     parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum reward_rate improvement ratio to continue training (default: 1e-4)")
+    parser.add_argument("--resume-checkpoint", type=str, default=None, help="Path to GRPO checkpoint file to resume training from")
     parser.add_argument(
         "--candidate-sub-batch-size",
         type=int,
@@ -154,6 +155,8 @@ def main() -> None:
         print(f"  Top-p: {config.top_p}")
         print(f"  KL penalty coef: {config.kl_penalty_coef}")
         print(f"  Max generation length: {config.max_gen_length}")
+        if args.resume_checkpoint:
+            print(f"\nResuming from: {args.resume_checkpoint}")
         if config.early_stopping:
             print("\nEarly Stopping:")
             print(f"  Patience: {config.early_stopping_patience}")
@@ -175,6 +178,7 @@ def main() -> None:
             filter_invalid_instruction=args.filter_invalid_instruction,
             candidate_sub_batch_size=args.candidate_sub_batch_size,
             accelerator=accelerator,
+            resume_checkpoint=args.resume_checkpoint,
         )
 
         if accelerator.is_local_main_process:

@@ -40,6 +40,9 @@ def main():
     parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of epochs with insufficient improvement before stopping (default: 3)")
     parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum loss improvement ratio to continue training (default: 1e-4)")
 
+    # Resume from checkpoint
+    parser.add_argument("--resume-checkpoint", type=str, default=None, help="Path to checkpoint file to resume training from")
+
     # Device argument is kept for CLI compatibility but ignored by Accelerate.
     parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
 
@@ -121,6 +124,8 @@ def main():
         print(f"  Gradient clip: {config.gradient_clip}")
         print(f"  Gradient accumulation: {config.gradient_accumulation_steps}")
         print(f"  Save every: {config.save_every} steps")
+        if args.resume_checkpoint:
+            print(f"\nResuming from: {args.resume_checkpoint}")
         print("=" * 60 + "\n")
 
     # Train model
@@ -135,7 +140,8 @@ def main():
             lora_config=lora_config,
             model_config=model_config,
             save_merged_model=args.save_merged_model,
-            accelerator=accelerator
+            accelerator=accelerator,
+            resume_checkpoint=args.resume_checkpoint
         )
 
         if accelerator.is_local_main_process:

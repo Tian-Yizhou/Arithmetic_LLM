@@ -72,7 +72,8 @@ def train_grpo_model(
     num_range: Tuple[int, int] = (1, 20),
     filter_invalid_instruction: bool = True,
     candidate_sub_batch_size: Optional[int] = None,
-    accelerator: Accelerator = None
+    accelerator: Accelerator = None,
+    resume_checkpoint: Optional[str] = None
 ) -> Dict[str, Any]:
     """Train GRPO model using instruction corpus or generated data."""
     
@@ -133,8 +134,29 @@ def train_grpo_model(
 
     # Build local batch list.
     train_dataloader = list(_batch_iter(pairs, config.batch_size))
-    
+
+    # Resume from checkpoint if provided.
+    start_epoch = 0
+    start_step = 0
+    if resume_checkpoint is not None:
+        if accelerator.is_local_main_process:
+            print(f"Resuming GRPO training from checkpoint: {resume_checkpoint}")
+        resume_metadata = trainer.load_checkpoint(resume_checkpoint)
+        start_epoch = resume_metadata['epoch']
+        start_step = resume_metadata['step']
+        # Re-initialize optimizer/scheduler with remaining steps.
+        remaining_steps = total_steps - start_step
+        if remaining_steps > 0:
+            trainer.reset_optimizer_and_scheduler(total_steps=remaining_steps)
+        if accelerator.is_local_main_process:
+            print(f"Resumed from epoch {start_epoch}, global step {start_step}")
+
     # Start training.
-    return trainer.train(train_dataloader, output_dir=output_dir)
+    return trainer.train(
+        train_dataloader,
+        output_dir=output_dir,
+        start_epoch=start_epoch,
+        start_step=start_step
+    )
 
 

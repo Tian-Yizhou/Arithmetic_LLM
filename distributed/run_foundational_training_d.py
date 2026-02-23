@@ -42,6 +42,9 @@ def main():
     # Device argument is kept for CLI compatibility but ignored by Accelerate.
     parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
     
+    # Resume from checkpoint
+    parser.add_argument("--resume-checkpoint", type=str, default=None, help="Path to checkpoint file to resume training from")
+
     # Model configuration
     parser.add_argument("--model-config", type=str, help="Path to model configuration JSON file")
     parser.add_argument("--d-model", type=int, default=256, help="Model embedding dimension")
@@ -106,6 +109,8 @@ def main():
         print(f"  Gradient clip: {config.gradient_clip}")
         print(f"  Gradient accumulation: {config.gradient_accumulation_steps}")
         print(f"  Save every: {config.save_every} steps")
+        if args.resume_checkpoint:
+            print(f"\nResuming from: {args.resume_checkpoint}")
         print("\nModel Configuration:")
         print(f"  d_model: {model_config['d_model']}")
         print(f"  nhead: {model_config['nhead']}")
@@ -122,7 +127,8 @@ def main():
             tokenizer_path=args.tokenizer_path,
             output_dir=args.output_dir,
             config=config,
-            model_config=model_config
+            model_config=model_config,
+            resume_checkpoint=args.resume_checkpoint
         )
         
         # Print success message on main process only.

@@ -298,7 +298,8 @@ def train_foundational_model(
     output_dir: str,
     config: TrainingConfig,
     model_config: Optional[Dict] = None,
-    accelerator: Accelerator = None
+    accelerator: Accelerator = None,
+    resume_checkpoint: Optional[str] = None
 ) -> str:
     """Train foundational model on arithmetic corpus.
 
@@ -309,6 +310,7 @@ def train_foundational_model(
         config: Training configuration
         model_config: Optional model architecture configuration
         accelerator: Pre-initialized Accelerator instance
+        resume_checkpoint: Optional path to checkpoint file to resume training from
 
     Returns:
         Path to final model checkpoint
@@ -428,13 +430,30 @@ def train_foundational_model(
         print("\nStarting training...")
 
     global_step = 0
+    start_epoch = 0
     best_val_loss = float('inf')
     training_log = []
     prev_val_loss = None
     patience_counter = 0
     early_stopped = False
 
-    for epoch in range(config.num_epochs):
+    # Resume from checkpoint if provided.
+    if resume_checkpoint is not None:
+        if accelerator.is_local_main_process:
+            print(f"\nResuming training from checkpoint: {resume_checkpoint}")
+        unwrapped_model = accelerator.unwrap_model(model)
+        resume_metadata = load_checkpoint(
+            checkpoint_path=resume_checkpoint,
+            model=unwrapped_model,
+            optimizer=optimizer,
+            scheduler=scheduler
+        )
+        start_epoch = resume_metadata['epoch']
+        global_step = resume_metadata['step']
+        if accelerator.is_local_main_process:
+            print(f"Resumed from epoch {start_epoch}, global step {global_step}")
+
+    for epoch in range(start_epoch, config.num_epochs):
         if accelerator.is_local_main_process:
             print(f"\n{'='*60}")
             print(f"Epoch {epoch + 1}/{config.num_epochs}")

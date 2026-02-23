@@ -452,12 +452,14 @@ class GRPOTrainer:
         self,
         train_dataloader,
         val_dataloader: Optional[Any] = None,
-        output_dir: str = "."
+        output_dir: str = ".",
+        start_epoch: int = 0,
+        start_step: int = 0
     ) -> Dict[str, Any]:
         """Run GRPO training loop."""
 
         start_time = time.time()
-        
+
         if self.policy_model is None or self.reference_model is None:
             raise ValueError("policy_model and reference_model must be initialized")
         if self.optimizer is None:
@@ -466,9 +468,9 @@ class GRPOTrainer:
         # [modified] only create output directory in the main process
         if self.accelerator.is_local_main_process:
             os.makedirs(output_dir, exist_ok=True)
-        
+
         training_log: List[Dict[str, Any]] = []
-        global_step = 0
+        global_step = start_step
         best_reward_rate = -1.0
         accum_steps = max(1, self.accelerator.gradient_accumulation_steps)
         total_steps = None
@@ -482,7 +484,7 @@ class GRPOTrainer:
         es_patience_counter = 0
         should_stop_early = False
 
-        for epoch in range(self.config.num_epochs):
+        for epoch in range(start_epoch, self.config.num_epochs):
             if self.accelerator.is_local_main_process:
                 print(f"\n{'='*60}")
                 print(f"Epoch {epoch + 1}/{self.config.num_epochs}")
