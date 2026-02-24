@@ -10,9 +10,9 @@ python run_foundational_training.py \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
   --max-seq-length 512 \
-  --batch-size 16 \
-  --learning-rate 1e-4 \
-  --num-epochs 5
+  --batch-size 32 \
+  --learning-rate 2e-4 \
+  --num-epochs 8
 
 # foundational best model path
 FOUNDATIONAL_DIR=$(ls -td models/foundational_* | head -n 1)
@@ -25,8 +25,8 @@ python run_instruction_training.py \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
   --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
-  --num-epochs 5 \
-  --batch-size 16 \
+  --num-epochs 10 \
+  --batch-size 32 \
   --learning-rate 1e-4
 
 
@@ -41,10 +41,10 @@ python run_instruction_training_lora.py \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
   --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
-  --num-epochs 5 \
-  --lora-rank 8 \
-  --lora-alpha 16 \
-  --lora-dropout 0.05 \
+  --num-epochs 10 \
+  --lora-rank 16 \
+  --lora-alpha 32 \
+  --lora-dropout 0.1 \
   --lora-target-modules attention,feedforward \
   --save-merged-model
 
@@ -61,7 +61,7 @@ python run_grpo_training.py \
   --tokenizer data/tokenizer \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
   --output-dir models/grpo \
-  --num-epochs 5 \
+  --num-epochs 10 \
   --batch-size 8 \
   --num-candidates 4 \
   --temperature 0.8 \
@@ -96,12 +96,6 @@ python run_evaluation.py \
 
 
 # 5.1 Evaluate LoRA (Includes Merge Step)
-
-# merge LoRA adapter with the base model to get a standalone model (optional)
-python merge_lora_adapter.py \
-  --base-checkpoint "$FOUNDATIONAL_CKPT" \
-  --adapter-path "$LORA_ADAPTER" \
-  --output-path "$LORA_MERGED_OUTPUT"
 
 # 5.1 Evaluate the LoRA merged model (optional)
 python run_evaluation.py \
