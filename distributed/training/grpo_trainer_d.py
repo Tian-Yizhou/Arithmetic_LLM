@@ -137,12 +137,21 @@ class GRPOTrainer:
         )
         checkpoint_vocab_size = checkpoint_data.get("tokenizer_vocab_size")
         if checkpoint_vocab_size is not None and checkpoint_vocab_size != vocab_size:
-            raise ValueError(
-                f"Tokenizer vocab size ({vocab_size}) does not match checkpoint "
-                f"vocab size ({checkpoint_vocab_size})."
-            )
-
-        model_config["vocab_size"] = vocab_size
+            if vocab_size > checkpoint_vocab_size:
+                raise ValueError(
+                    f"Tokenizer vocab size ({vocab_size}) is larger than checkpoint "
+                    f"vocab size ({checkpoint_vocab_size}). Cannot load: "
+                    f"embedding weights would be missing for new tokens."
+                )
+            # Tokenizer is smaller — use checkpoint's vocab_size so the model
+            # architecture matches the saved weights. Extra embedding rows are
+            # simply unused at inference time.
+            if self.accelerator.is_local_main_process:
+                print(
+                    f"Warning: tokenizer vocab size ({vocab_size}) < checkpoint "
+                    f"vocab size ({checkpoint_vocab_size}). Using checkpoint's "
+                    f"vocab_size for model architecture."
+                )
         self.policy_model = ArithmeticTransformer(**model_config)
         self.reference_model = ArithmeticTransformer(**model_config)
 
