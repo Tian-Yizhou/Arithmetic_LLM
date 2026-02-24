@@ -131,6 +131,7 @@ echo ">>> Starting GRPO Training..."
 
 accelerate launch run_grpo_training_d.py \
   --tokenizer data/tokenizer \
+  --instruction-corpus data/instruction_corpus.txt \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
   --output-dir models/grpo \
   --num-epochs 10 \
