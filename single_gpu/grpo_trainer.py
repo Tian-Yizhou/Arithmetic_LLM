@@ -10,6 +10,7 @@ import time
 
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from arithmetic_tokenizer import ArithmeticBPETokenizer
 from arithmetic_verifier import ArithmeticVerifier
@@ -455,11 +456,21 @@ class GRPOTrainer:
             total_steps = None
 
         for epoch in range(self.config.num_epochs):
+            print(f"\n{'='*60}")
+            print(f"Epoch {epoch + 1}/{self.config.num_epochs}")
+            print(f"{'='*60}")
+
             step_start = None
             step_time = None
             accum_metrics = None
             accum_batches = 0
-            for batch_idx, batch in enumerate(train_dataloader):
+
+            progress_bar = tqdm(
+                enumerate(train_dataloader),
+                total=len(train_dataloader) if hasattr(train_dataloader, '__len__') else None,
+                desc=f"Epoch {epoch + 1}",
+            )
+            for batch_idx, batch in progress_bar:
                 did_step = False
                 if isinstance(batch, dict):
                     prompts = batch.get("prompts")
@@ -533,33 +544,21 @@ class GRPOTrainer:
                 else:
                     learning_rate = self.optimizer.param_groups[0]["lr"]
 
-                if did_step and global_step % self.config.log_every == 0:
-                    avg_metrics = metrics
-                    if accum_metrics is not None and accum_batches:
-                        avg_metrics = {
-                            key: value / accum_batches
-                            for key, value in accum_metrics.items()
-                        }
-                    step_label = (
-                        f"{global_step}/{total_steps}"
-                        if total_steps is not None
-                        else f"{global_step}"
-                    )
-                    time_fragment = ""
-                    if step_time is not None:
-                        time_fragment = f"time {step_time:.2f}s "
-                    print(
-                        "[grpo] "
-                        f"step {step_label} "
-                        f"epoch {epoch + 1}/{self.config.num_epochs} "
-                        f"{time_fragment}"
-                        f"loss {avg_metrics['total_loss']:.4f} "
-                        f"kl {avg_metrics['kl_divergence']:.4f} "
-                        f"reward {avg_metrics['avg_reward']:.3f} "
-                        f"reward_rate {avg_metrics['reward_rate']:.3f} "
-                        f"lr {learning_rate:.2e}",
-                        flush=True
-                    )
+                # Update progress bar with current metrics.
+                avg_metrics = metrics
+                if accum_metrics is not None and accum_batches:
+                    avg_metrics = {
+                        key: value / accum_batches
+                        for key, value in accum_metrics.items()
+                    }
+                progress_bar.set_postfix({
+                    'loss': f"{avg_metrics['total_loss']:.4f}",
+                    'kl': f"{avg_metrics['kl_divergence']:.4f}",
+                    'reward': f"{avg_metrics['avg_reward']:.3f}",
+                    'rw_rate': f"{avg_metrics['reward_rate']:.3f}",
+                    'lr': f"{learning_rate:.2e}",
+                    'step': global_step,
+                })
 
                 log_metrics = metrics
                 if did_step and accum_metrics is not None and accum_batches:
