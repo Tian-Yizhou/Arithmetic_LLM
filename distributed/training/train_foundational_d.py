@@ -111,6 +111,53 @@ def save_checkpoint(
     return checkpoint_path
 
 
+def _merge_lora_state_dict(state_dict: dict, checkpoint_config: dict) -> dict:
+    """Merge LoRA weights into base weights, producing a plain state dict.
+
+    When a checkpoint was saved from a LoRA-adapted model, the state dict
+    contains keys like 'layers.0.self_attention.q_proj.base_layer.weight'
+    and 'layers.0.self_attention.q_proj.lora_A/lora_B'. This function
+    merges them into plain keys like 'layers.0.self_attention.q_proj.weight'
+    so the checkpoint can be loaded into a plain ArithmeticTransformer.
+    """
+    lora_config = checkpoint_config.get('lora_config', {})
+    if isinstance(lora_config, dict):
+        alpha = lora_config.get('alpha', 16.0)
+        rank = lora_config.get('rank', 8)
+    else:
+        alpha = 16.0
+        rank = 8
+    scaling = alpha / rank
+
+    merged = {}
+    processed_prefixes = set()
+
+    for key in state_dict:
+        if '.base_layer.' in key:
+            prefix, suffix = key.split('.base_layer.')
+            plain_key = f"{prefix}.{suffix}"
+
+            if suffix == 'weight' and prefix not in processed_prefixes:
+                lora_a_key = f"{prefix}.lora_A"
+                lora_b_key = f"{prefix}.lora_B"
+                base_weight = state_dict[key]
+                if lora_a_key in state_dict and lora_b_key in state_dict:
+                    lora_a = state_dict[lora_a_key]
+                    lora_b = state_dict[lora_b_key]
+                    merged[plain_key] = base_weight + (lora_b @ lora_a) * scaling
+                else:
+                    merged[plain_key] = base_weight
+                processed_prefixes.add(prefix)
+            else:
+                merged[plain_key] = state_dict[key]
+        elif key.endswith('.lora_A') or key.endswith('.lora_B'):
+            continue
+        else:
+            merged[key] = state_dict[key]
+
+    return merged
+
+
 def load_checkpoint(
     checkpoint_path: str,
     model: ArithmeticTransformer,
@@ -118,19 +165,28 @@ def load_checkpoint(
     scheduler: Optional[torch.optim.lr_scheduler.LambdaLR] = None
 ) -> Dict:
     """Load model checkpoint.
-    
+
     Args:
         checkpoint_path: Path to checkpoint file
         model: Model to load weights into
         optimizer: Optional optimizer to load state into
         scheduler: Optional scheduler to load state into
-        
+
     Returns:
         Dictionary with checkpoint metadata
     """
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    
-    model.load_state_dict(checkpoint['model_state_dict'])
+
+    state_dict = checkpoint['model_state_dict']
+
+    # Detect LoRA checkpoint being loaded into a plain model.
+    has_lora_keys = any('.base_layer.' in k for k in state_dict)
+    model_expects_lora = any('.base_layer.' in k for k in model.state_dict())
+
+    if has_lora_keys and not model_expects_lora:
+        state_dict = _merge_lora_state_dict(state_dict, checkpoint.get('config', {}))
+
+    model.load_state_dict(state_dict)
     
     if optimizer is not None and 'optimizer_state_dict' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
