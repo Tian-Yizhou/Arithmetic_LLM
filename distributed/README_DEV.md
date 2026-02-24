@@ -1,7 +1,7 @@
-# Development Log: Distributed Training Refactoring
+# Development Log of Arithmetic LLM
 
-**Project:** Arithmetic LLM — Multi-GPU Training with HuggingFace Accelerate
-**Author:** Hannah
+**Project:** Arithmetic LLM
+**Author:** Yizhou Tian
 **Status:** Completed & Tested
 
 ---
@@ -561,3 +561,17 @@ accelerate launch run_evaluation_d.py \
   --tokenizer-path data/tokenizer \
   --num-samples 1000 --batch-size 1
 ```
+
+
+
+**Checkpoint Resumption Support for Distributed Training**
+
+The original distributed training codebase saved comprehensive checkpoint files containing model weights, optimizer state dictionaries, scheduler state dictionaries, epoch numbers, and global step counts. However, none of the training pipelines actually utilized the saved optimizer, scheduler, or progress metadata when restarting. Every training run began from epoch 0 and global step 0 regardless of whether a checkpoint was provided. The `load_checkpoint()` function in `train_foundational_d.py` already accepted optional optimizer and scheduler parameters, but these were never passed by any caller — checkpoints were only used to initialize model weights for the next stage (e.g., loading a foundational model before instruction fine-tuning).
+
+To enable training resumption, a `--resume-checkpoint` CLI argument was added to all four training entry points: `run_foundational_training_d.py`, `run_instruction_training_d.py`, r`un_instruction_training_lora_d.py`, and `run_grpo_training_d.py`. Each entry point passes this path through to its corresponding training function.
+
+In these three epoch-based training functions (`train_foundational_d.py`, `train_instruction_d.py`, `train_instruction_lora_d.py`), the resume logic loads the checkpoint after the model, optimizer, and scheduler have been initialized and prepared by Accelerate. It calls `load_checkpoint()` with all three components — model, optimizer, and scheduler — restoring not just the weights but also the optimizer's momentum buffers and the scheduler's learning rate position. The saved epoch and global step are extracted from the checkpoint metadata, and the epoch loop changes from `range(config.num_epochs)` to `range(start_epoch, config.num_epochs)`, so completed epochs are skipped entirely.
+
+For the GRPO pipeline, which has a different architecture using GRPO Trainer, the resume logic calls `trainer.load_checkpoint()` to restore the policy model, reference model, optimizer, and scheduler states. The saved epoch and step values are passed to `trainer.train()` as `start_epoch` and `start_step` parameters. The `train()` method was modified to accept these parameters, initializing `global_step` from `start_step` instead of 0 and starting the epoch loop from `start_epoch`. After loading the checkpoint, the optimizer and scheduler are re-initialized for the remaining steps to ensure the learning rate schedule is correctly aligned with the remaining training duration.
+
+These changes allow any interrupted or completed training run to be resumed from any saved checkpoint by simply adding `--resume-checkpoint <path>` to the launch command. The full training state — including optimizer momentum, learning rate schedule position, and progress counters — is restored, so resumed training produces results equivalent to an uninterrupted run.

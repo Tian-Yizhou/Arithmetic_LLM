@@ -8,13 +8,11 @@ See `NOTES.md` for consolidated technical notes on tokenizer behavior, data load
 ## Overview
 
 This system trains a language model to:
-
 - Evaluate arithmetic expressions with addition (+) and subtraction (-)
 - Provide detailed step-by-step reasoning
 - Produce accurate final results
 
 The training process consists of two phases:
-
 1. **Foundational Training**: Train a base model on arithmetic expressions and evaluations
 2. **Instruction Fine-tuning**: Fine-tune the model to respond to instruction prompts with structured reasoning
 
@@ -32,7 +30,6 @@ The system uses **JSONL (JSON Lines)** format for corpus data. Each line is a JS
 ```
 
 **Field Descriptions:**
-
 - `expression`: Raw arithmetic expression
 - `problem`: Formatted problem statement with "Evaluate:" prefix
 - `solution`: Complete solution with `<think>` tags and step-by-step reasoning
@@ -207,7 +204,6 @@ python generate_instruction_corpus_mixed.py \
 ```
 
 **Corpus Size Recommendations:**
-
 - **Minimum (quick testing)**: 10,000 samples - Fast generation and training, but may underfit
 - **Recommended**: 50,000 samples - Good balance of training time and model accuracy
 - **Optimal**: 100,000+ samples - Best accuracy and generalization, longer training time
@@ -215,7 +211,6 @@ python generate_instruction_corpus_mixed.py \
 For production-quality results, use at least 50,000 samples. The model needs sufficient data to learn arithmetic patterns, order of operations, and step-by-step reasoning.
 
 **Parameters:**
-
 - `--num-samples`: Number of expression-evaluation pairs to generate (required)
 - `--max-depth`: Maximum depth of expression trees (default: 5)
 - `--num-range`: Range of numbers to use (default: 1 20)
@@ -226,26 +221,22 @@ For production-quality results, use at least 50,000 samples. The model needs suf
 - `--instruction-only`: Generate only instruction corpus
 
 **Mixed Instruction Corpus Script:**
-
 - `python generate_instruction_corpus_mixed.py` creates a mixed instruction corpus
 - `--output-mixed`: Path for the mixed instruction corpus
 
 **Foundational Plain-Text Script:**
-
 - `python generate_foundational_plaintext.py` generates shuffled plain text directly
 - `--output-txt`: Path to plain-text corpus for training
 
 **Output Format:**
 
 Foundational corpus (post-processed, plain text):
-
 ```
 Evaluate: 5 + (10 - 3)
 <think> Step 1: 10 - 3 = 7 Expression now: 5 + 7 Step 2: 5 + 7 = 12 Expression now: 12 </think> Final Result: 12
 ```
 
 Instruction corpus:
-
 ```
 Evaluate: 5 + (10 - 3) <think>
 <think>
@@ -269,13 +260,11 @@ python train_tokenizer.py \
 ```
 
 **Parameters:**
-
 - `--corpus-path`: Path to training corpus (required)
 - `--vocab-size`: Target vocabulary size (default: 1000)
 - `--output-dir`: Directory to save tokenizer (default: data/tokenizer)
 
 **Special Tokens:**
-
 - `<pad>`: Padding token
 - `<unk>`: Unknown token
 - `<bos>`: Beginning of sequence
@@ -298,7 +287,6 @@ python run_foundational_training.py \
 ```
 
 **Training Parameters:**
-
 - `--corpus-path`: Path to training corpus (required)
 - `--tokenizer-path`: Path to tokenizer directory (required)
 - `--output-dir`: Directory to save checkpoints (default: models)
@@ -311,7 +299,6 @@ python run_foundational_training.py \
 - `--device`: Device for training: 'cuda', 'cpu', or 'auto' (default: auto)
 
 **Model Architecture Parameters:**
-
 - `--d-model`: Embedding dimension (default: 256)
 - `--nhead`: Number of attention heads (default: 8)
 - `--num-layers`: Number of transformer layers (default: 6)
@@ -320,7 +307,6 @@ python run_foundational_training.py \
 
 **Configuration Files:**
 You can also use JSON configuration files:
-
 ```bash
 python run_foundational_training.py \
   --corpus-path data/foundational_corpus_plain.txt \
@@ -331,7 +317,6 @@ python run_foundational_training.py \
 
 **Output:**
 Training creates a timestamped directory containing:
-
 - `best_model.pt`: Best model checkpoint (lowest validation loss)
 - `final_model.pt`: Final model checkpoint
 - `checkpoint_step_N.pt`: Intermediate checkpoints
@@ -356,7 +341,6 @@ python run_instruction_training.py \
 ```
 
 **Parameters:**
-
 - `--instruction-corpus-path`: Path to instruction corpus (required)
 - `--tokenizer-path`: Path to tokenizer directory (required)
 - `--foundational-checkpoint`: Path to foundational model checkpoint (required)
@@ -392,7 +376,6 @@ python run_instruction_training_lora.py \
 ```
 
 **Parameters (LoRA-specific):**
-
 - `--lora-rank`: LoRA rank (default: 8)
 - `--lora-alpha`: LoRA alpha scaling (default: 16.0)
 - `--lora-target-modules`: Comma-separated target modules (attention, feedforward)
@@ -400,7 +383,6 @@ python run_instruction_training_lora.py \
 - `--save-merged-model`: Save merged model for inference
 
 **Outputs:**
-
 - `lora_adapter.pt`: LoRA adapter weights
 - `merged_model.pt`: Optional merged model when `--save-merged-model` is used
 
@@ -422,7 +404,6 @@ python run_grpo_training.py \
 ```
 
 **Parameters:**
-
 - `--instruction-corpus`: Instruction corpus JSONL (required for instruction mode)
 - `--tokenizer`: Tokenizer directory (required)
 - `--sft-checkpoint`: SFT checkpoint path (required)
@@ -434,7 +415,6 @@ python run_grpo_training.py \
 - `--gradient-accumulation-steps`: Accumulate gradients across steps
 
 **Outputs:**
-
 - `checkpoint_step_N.pt`: Periodic checkpoints
 - `best_model.pt`: Best checkpoint by validation reward rate (if validation enabled)
 - `final_model.pt`: Final checkpoint
@@ -454,7 +434,6 @@ python run_evaluation.py \
 ```
 
 **LoRA Evaluation (merged model):**
-
 ```bash
 python run_evaluation.py \
   --model-path models/instruction_lora_YYYYMMDD_HHMMSS/merged_model.pt \
@@ -465,7 +444,6 @@ python run_evaluation.py \
 ```
 
 If you saved only adapters, merge them into a base checkpoint first:
-
 ```bash
 python merge_lora_adapter.py \
   --base-checkpoint models/foundational_YYYYMMDD_HHMMSS/best_model.pt \
@@ -474,7 +452,6 @@ python merge_lora_adapter.py \
 ```
 
 **Parameters:**
-
 - `--model-path`: Path to model checkpoint (required)
 - `--tokenizer-path`: Path to tokenizer directory (required)
 - `--num-samples`: Number of test expressions (default: 1000)
@@ -484,20 +461,17 @@ python merge_lora_adapter.py \
 - `--device`: Device for inference (default: auto)
 
 **Metrics:**
-
 - **Exact Match Accuracy**: Percentage of correct final results
 - **Parse Success Rate**: Percentage of parseable outputs
 - **Average Generation Length**: Mean number of tokens generated
 
 **Output:**
 Evaluation creates timestamped files:
-
 - `evaluation_metrics_YYYYMMDD_HHMMSS.json`: Detailed metrics
 - `sample_outputs_YYYYMMDD_HHMMSS.json`: Sample model outputs
 - `evaluation_summary_YYYYMMDD_HHMMSS.txt`: Human-readable summary
 
 **Expected Performance:**
-
 - Good models: 60-80% accuracy
 - Excellent models: 80%+ accuracy
 - Parse success rate should be >90%
@@ -513,13 +487,11 @@ python run_interactive.py \
 ```
 
 **Parameters:**
-
 - `--model-path`: Path to instruction-tuned model (required)
 - `--tokenizer-path`: Path to tokenizer directory (required)
 - `--device`: Device for inference (default: auto)
 
 **Usage:**
-
 ```
 Enter expression: 5 + (10 - 3)
 
@@ -540,7 +512,6 @@ Enter expression: exit
 ```
 
 **Commands:**
-
 - Type any arithmetic expression to solve it
 - Type `exit`, `quit`, or `q` to exit
 - Press `Ctrl+C` to exit
@@ -552,7 +523,6 @@ Enter expression: exit
 ### Out of Memory Errors
 
 If you encounter CUDA out of memory errors:
-
 1. Reduce batch size: `--batch-size 16` or `--batch-size 8`
 2. Reduce model size: `--d-model 128 --num-layers 4`
 3. Use CPU: `--device cpu` (slower but uses system RAM)
@@ -560,7 +530,6 @@ If you encounter CUDA out of memory errors:
 ### Low Accuracy
 
 If model accuracy is low:
-
 1. Generate more training data: `--num-samples 100000` (increase to 100K or more)
 2. Train for more epochs: `--num-epochs 20`
 3. Increase model size: `--d-model 512 --num-layers 8`
@@ -570,7 +539,6 @@ If model accuracy is low:
 ### Tokenizer Issues
 
 If tokenizer produces unexpected results:
-
 1. Increase vocabulary size: `--vocab-size 2000`
 2. Verify corpus contains diverse expressions
 3. Check that special tokens are preserved
@@ -578,7 +546,6 @@ If tokenizer produces unexpected results:
 ### Training Not Converging
 
 If training loss doesn't decrease:
-
 1. Reduce learning rate: `--learning-rate 5e-5`
 2. Increase warmup steps: `--warmup-steps 2000`
 3. Check gradient clipping: `--gradient-clip 0.5`
@@ -604,7 +571,6 @@ Create a JSON configuration file for reproducible training:
 ```
 
 Use it with:
-
 ```bash
 python run_foundational_training.py \
   --corpus-path data/corpus.txt \
@@ -628,7 +594,6 @@ Create a model configuration file:
 ```
 
 Use it with:
-
 ```bash
 python run_foundational_training.py \
   --corpus-path data/corpus.txt \
@@ -638,13 +603,23 @@ python run_foundational_training.py \
 
 ### Resuming Training
 
-The method to resume checkpoints in original project has the following limitations:
-
-1. Resuming checkpoints only load the parameters, it will  start a new training session rather than continuing the previous one.
-1. the state of optimizer
-
-After reconstruction, my project enables resume checkpoints and literally CONTINUE training like it was never interrupted. Please check `README_DEV.md` for more details.
+To resume training from a checkpoint, use the checkpoint as the starting point for a new training run. Note that this starts a new training session rather than continuing the previous one.
 
 ### Distributed Training
 
 For multi-GPU training, modify the training scripts to use PyTorch's DistributedDataParallel. This is not currently implemented but can be added by wrapping the model with DDP.
+
+## Performance Tips
+
+1. **Use GPU**: Training on GPU is 10-100x faster than CPU
+2. **Batch Size**: Larger batches (32-64) train faster but use more memory
+3. **Corpus Size**: More data (50K-100K samples) improves accuracy
+4. **Model Size**: Larger models (d_model=512, num_layers=8) are more accurate but slower
+5. **Checkpointing**: Save checkpoints frequently to avoid losing progress
+
+
+## Acknowledgments
+
+- Transformer architecture adapted from the TinyStories project
+- BPE tokenization based on HuggingFace tokenizers library
+- Expression generation and evaluation utilities from existing codebase
