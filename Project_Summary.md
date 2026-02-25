@@ -1,147 +1,25 @@
-# Arithmetic LLM Training System - Quick Start Summary
+# Arithmetic LLM Training System - Summary
 
-## Quick Start Demo: Full Pipeline from Beginning to End
 
-Follow these commands to reproduce the complete training pipeline:
 
-### Step 1: Corpus Generation
-```bash
-python corpus_generator.py \
-  --output-dir data/ \
-  --foundational-samples 100000 \
-  --instruction-samples 20000 \
-  --test-samples 1000
-```
+## Completed Steps
 
-### Step 2: Tokenizer Training
-```bash
-python tokenizer_trainer.py \
-  --corpus-path data/foundational_corpus.txt \
-  --output-dir data/tokenizer \
-  --vocab-size 1000 \
-  --special-tokens pad,unk,bos,eos,tool_call
-```
-
-### Step 3: Sequence Analysis
-```bash
-python sequence_analyzer.py \
-  --corpus-path data/instruction_corpus.txt \
-  --percentiles 90 95 99 \
-  --output-dir analysis/
-```
-
-### Step 4: Foundational Model Training
-```bash
-python run_foundational_training.py \
-  --corpus-path data/foundational_corpus.txt \
-  --output-dir models/ \
-  --tokenizer-path data/tokenizer \
-  --max-seq-length 512 \
-  --batch-size 16 \
-  --learning-rate 0.0001 \
-  --num-epochs 5
-```
-
-### Step 5: Foundational Model Evaluation
-```bash
-python run_evaluation.py \
-  --model-path models/foundational_20260201_012912_173614/best_model.pt \
-  --tokenizer-path data/tokenizer \
-  --max-gen-length 512 \
-  --num-samples 100 \
-  --batch-size 1
-```
-
-### Step 6: Instruction Fine-tuning
-```bash
-python run_instruction_training.py \
-  --instruction-corpus-path data/instruction_corpus.txt \
-  --output-dir models/ \
-  --tokenizer-path data/tokenizer \
-  --foundational-checkpoint models/foundational_20260201_012912_173614/best_model.pt \
-  --num-epochs 5 \
-  --batch-size 16 \
-  --learning-rate 0.0001
-```
-
-### Step 7: Instruction Model Evaluation
-```bash
-python run_evaluation.py \
-  --model-path models/instruction_20260201_042439_468735/best_model.pt \
-  --tokenizer-path data/tokenizer \
-  --max-gen-length 512 \
-  --num-samples 1000 \
-  --batch-size 1
-```
-
-### Step 8: LoRA Fine-tuning
-```bash
-python run_instruction_training_lora.py \
-  --instruction-corpus-path data/instruction_corpus.txt \
-  --output-dir models/ \
-  --tokenizer-path data/tokenizer \
-  --foundational-checkpoint models/foundational_20260201_012912_173614/best_model.pt \
-  --num-epochs 3 \
-  --lora-rank 8 \
-  --lora-alpha 16 \
-  --lora-target-modules attention \
-  --save-merged-model
-```
-
-### Step 9: LoRA Model Evaluation
-```bash
-python run_evaluation.py \
-  --model-path models/instruction_lora_20260201_053153_241537/lora_adapter.pt \
-  --tokenizer-path data/tokenizer \
-  --max-gen-length 512 \
-  --num-samples 1000 \
-  --batch-size 1
-```
-
-### Step 10: GRPO Training (Reinforcement Learning)
-```bash
-python run_grpo_training.py \
-  --instruction-corpus data/instruction_corpus.txt \
-  --tokenizer data/tokenizer \
-  --sft-checkpoint models/instruction_20260201_042439_468735/best_model.pt \
-  --output-dir models/grpo \
-  --num-epochs 3 \
-  --batch-size 8 \
-  --num-candidates 4 \
-  --temperature 0.8 \
-  --kl-penalty-coef 0.05
-```
-
-### Step 11: GRPO Model Evaluation
-```bash
-python run_evaluation.py \
-  --model-path models/grpo/grpo_20260201_153650_018769/final_model.pt \
-  --tokenizer-path data/tokenizer \
-  --max-gen-length 512 \
-  --num-samples 1000 \
-  --batch-size 1
-```
-
----
-
-## Completed Steps Summary
-
-### 1. Corpus Generation ✓
+### 1. Corpus Generation
 - Generated foundational training corpus (100,000 samples)
 - Generated instruction corpus (20,000 samples) 
 - Generated test corpus (1,000 samples)
 
-### 2. Tokenizer Training ✓
+### 2. Tokenizer Training
 - Trained BPE tokenizer with vocabulary size 1000
 - Tokenizer includes special tokens: `<pad>`, `<unk>`, `<bos>`, `<eos>`, `<tool_call>`
 - Tokenizer file saved to `data/tokenizer/tokenizer.pkl`
 
-### 3. Sequence Analysis ✓
+### 3. Sequence Analysis
 - Analyzed instruction corpus sequence lengths
 - Found 95% coverage requires max_seq_length ≥ 467 tokens
 - Recommended max_seq_length = 512 for balanced coverage
 
-### 4. Model Training ✓
+### 4. Model Training
 All models have been trained successfully:
 - Foundational Model: `models/foundational_20260201_012912_173614/best_model.pt`
 - Instruction Model: `models/instruction_20260201_042439_468735/best_model.pt`
@@ -163,7 +41,7 @@ All models have been trained successfully:
 
 ### Detailed Evaluation Analysis
 
-#### 1. Foundational Model Evaluation (20260201_043103)
+#### 1. Foundational Model Evaluation
 - **Model**: `models/foundational_20260201_012912_173614/best_model.pt`
 - **Total Samples**: 100
 - **Exact Match Accuracy**: 0.00% (0/100 correct)
@@ -218,7 +96,7 @@ Incorrect Example:
 - Parse Rate: -5.0% decrease
 - Suggests potential overfitting or instability in LoRA training
 
-#### 4. GRPO RL-Optimized Model Evaluation (20260201_213159)
+#### 4. GRPO RL-Optimized Model Evaluation
 - **Model**: `models/grpo/grpo_20260201_153650_018769/final_model.pt`
 - **Total Samples**: 1,000
 - **Exact Match Accuracy**: 72.70% (727/1000 correct)
@@ -279,28 +157,39 @@ GRPO RL Training       →   72.70%     76.60%      +29.3%
 ### Strengths by Model
 
 **Foundational Model**:
-- ❌ Not suitable for direct inference
-- ❌ Requires supervised fine-tuning
+
+- Shortcomings
+  - Not suitable for direct inference
+  - Requires supervised fine-tuning
 
 **Instruction-Tuned Model**:
-- ✓ Learns arithmetic structure (88.8% parse success)
-- ✓ Good baseline for further optimization
-- ✓ Demonstrates chain-of-thought capability
-- ❌ Limited accuracy for complex expressions
+
+- Advantages
+	- Learns arithmetic structure (88.8% parse success)
+	- Good baseline for further optimization
+	- Demonstrates chain-of-thought capability
+- Shortcomings
+	- Limited accuracy for complex expressions
 
 **LoRA Model**:
-- ✓ Parameter-efficient fine-tuning
-- ✓ Maintains baseline performance
-- ✓ Can be deployed with smaller model size
-- ❌ Minimal accuracy improvement
+
+- Advantages
+	- Parameter-efficient fine-tuning
+	- Maintains baseline performance
+	- Can be deployed with smaller model size
+- Shortcomings
+	- Minimal accuracy improvement
 
 **GRPO Model** (Best Overall):
-- ✓✓ Highest accuracy (72.7%)
-- ✓ Strong chain-of-thought reasoning
-- ✓ Handles moderately complex expressions well
-- ✓ Learns from reward signals
-- ⚠ Parse failures on very complex nested expressions (>4 levels)
-- ⚠ Average generation length increases (235 tokens)
+
+- Advantages
+	- Highest accuracy (72.7%)
+	- Strong chain-of-thought reasoning
+	- Handles moderately complex expressions well
+	- Learns from reward signals
+- Shortcomings
+	- Parse failures on very complex nested expressions (>4 levels)
+	- Average generation length increases (235 tokens)
 
 ---
 
@@ -311,7 +200,7 @@ GRPO RL Training       →   72.70%     76.60%      +29.3%
 - For deployments with size constraints, consider Instruction model (41.4% but more compact)
 
 ### For Further Improvement
-1. **Increase model capacity**: Current model may be too small for very complex expressions
+1. **Increase model capacity**: Current model is too small for complex expressions
 2. **Better parsing strategy**: Implement constrained generation to avoid parse failures
 3. **Curriculum learning**: Start with simple expressions and gradually increase complexity
 4. **Data augmentation**: Generate more diverse/complex training examples
