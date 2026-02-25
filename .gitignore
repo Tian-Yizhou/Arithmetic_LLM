@@ -214,6 +214,8 @@ CLAUDE.md
 models/
 # ignore all .txt files
 *.txt
+# ignore all .pkl files
+*.pkl
 
 # macOS
 # .DS_Store under any directory
