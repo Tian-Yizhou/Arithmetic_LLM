@@ -1,8 +1,6 @@
 # Arithmetic LLM Training System
 
-A two-phase machine learning pipeline that trains a transformer-based language model to solve arithmetic problems with step-by-step reasoning.
-
-See `NOTES.md` for consolidated technical notes on tokenizer behavior, data loading, and evaluation details.
+A project that trains a **transformer-based language model** to solve arithmetic problems with step-by-step reasoning.
 
 
 ## Overview
@@ -11,16 +9,23 @@ This system trains a language model to:
 
 - Evaluate arithmetic expressions with addition (+) and subtraction (-)
 - Provide detailed step-by-step reasoning
-- Produce accurate final results
+- Produce calculation results
 
 The training process consists of two phases:
 
 1. **Foundational Training**: Train a base model on arithmetic expressions and evaluations
 2. **Instruction Fine-tuning**: Fine-tune the model to respond to instruction prompts with structured reasoning
 
+## Files
+
+- See `NOTES.md` for consolidated technical notes on tokenizer behavior, data loading, and evaluation details.
+- See `README_DEV.md` for technical challenges and solutions when I refactor this project.
+- See `Quick_Start.md` for 
+- See `Replicate_Arithmetic_LLM.md` to replicate this project.
+
 ### Data Format
 
-The system uses **JSONL (JSON Lines)** format for corpus data. Each line is a JSON object with structured fields:
+The system uses **JSON Lines** format for corpus data. Each line is a JSON object with structured fields:
 
 ```json
 {
@@ -31,7 +36,7 @@ The system uses **JSONL (JSON Lines)** format for corpus data. Each line is a JS
 }
 ```
 
-**Field Descriptions:**
+
 
 - `expression`: Raw arithmetic expression
 - `problem`: Formatted problem statement with "Evaluate:" prefix
@@ -44,13 +49,17 @@ The data loader processes JSONL data differently based on training mode:
 
 1. **Foundational Mode**: Concatenates `problem + solution` to train the base model on complete sequences
    - Input: `"Evaluate: 5 + (10 - 3) <think> Step 1: 10 - 3 = 7 ... Final Result: 12"`
-   - Model learns when to generate `<think>` and complete reasoning
+   - Model learns when to **generate `<think>` and complete reasoning**
 
 2. **Instruction Mode**: Uses `problem + " <think>"` as prompt, `solution` as target
    - Prompt: `"Evaluate: 5 + (10 - 3) <think>"`
    - Target: `"<think> Step 1: 10 - 3 = 7 ... Final Result: 12"`
-   - Model learns to generate reasoning given instruction prompts
+   - Model learns how to **generate reasoning given instruction prompts**
    - Loss computed only on target tokens (prompt tokens masked)
+
+
+
+
 
 
 ## Quick Start

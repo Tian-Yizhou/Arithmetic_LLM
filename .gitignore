@@ -212,6 +212,8 @@ CLAUDE.md
 
 # data
 models/
+# ignore all .txt files
+*.txt
 
 # macOS
 # .DS_Store under any directory
