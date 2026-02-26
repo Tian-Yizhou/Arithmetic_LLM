@@ -253,8 +253,11 @@ class ModelEvaluator:
             if 'model_config' in checkpoint:
                 model_config = dict(checkpoint['model_config'])
                 model_config["vocab_size"] = len(self.tokenizer.token2id)
+                print(f"[DEBUG] Using model_config from checkpoint: {model_config}")
                 self.model = ArithmeticTransformer(**model_config)
             elif 'config' in checkpoint:
+                print(f"[DEBUG] model_config NOT found, falling back to 'config'")
+                print(f"[DEBUG] checkpoint keys: {list(checkpoint.keys())}")
                 config = checkpoint['config']
                 self.model = ArithmeticTransformer(
                     vocab_size=len(self.tokenizer.token2id),
