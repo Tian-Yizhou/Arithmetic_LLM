@@ -257,7 +257,7 @@ accelerate launch run_grpo_training.py \
   --instruction-corpus data/instruction_corpus.txt \
   --tokenizer data/tokenizer \
   --sft-checkpoint models/instruction_YYYYMMDD_HHMMSS/best_model.pt \
-  --output-dir models/grpo \
+  --output-dir models/ \
   --num-epochs 3 \
   --batch-size 8 \
   --learning-rate 1e-5 \

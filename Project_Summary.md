@@ -5,8 +5,8 @@
 ## Completed Steps
 
 ### 1. Corpus Generation
-- Generated foundational training corpus (100,000 samples)
-- Generated instruction corpus (20,000 samples) 
+- Generated foundational training corpus (150,000 samples)
+- Generated instruction corpus (150,000 samples) 
 - Generated test corpus (1,000 samples)
 
 ### 2. Tokenizer Training
@@ -21,14 +21,15 @@
 
 ### 4. Model Training
 All models have been trained successfully:
-- Foundational Model: `models/foundational_20260201_012912_173614/best_model.pt`
-- Instruction Model: `models/instruction_20260201_042439_468735/best_model.pt`
-- LoRA Model: `models/instruction_lora_20260201_053153_241537/lora_adapter.pt`
-- GRPO Model: `models/grpo/grpo_20260201_153650_018769/final_model.pt`
+- Foundational Model: `models/foundational/best_model.pt`
+- Instruction Model: `models/instruction/best_model.pt`
+- LoRA Adaptor: `models/instruction_lora/lora_adapter.pt`
+- LoRA Merged Model: `models/instruction_lora/merged_model.pt`
+- GRPO Model: `models/grpo_YYYYMMDD_HHMMSS/final_model.pt`
 
 ---
 
-## Comprehensive Evaluation Results
+## Evaluation Results
 
 ### All Models Evaluation Comparison
 
@@ -97,7 +98,7 @@ Incorrect Example:
 - Suggests potential overfitting or instability in LoRA training
 
 #### 4. GRPO RL-Optimized Model Evaluation
-- **Model**: `models/grpo/grpo_20260201_153650_018769/final_model.pt`
+- **Model**: `models/grpo_20260201_153650_018769/final_model.pt`
 - **Total Samples**: 1,000
 - **Exact Match Accuracy**: 72.70% (727/1000 correct)
 - **Parse Success Rate**: 76.60% (766/1000 parseable)
@@ -119,7 +120,8 @@ Failure Cases:
 - Parse failures on unclosed expressions (~23% failure rate)
 ```
 
-**Example Chain-of-Thought Reasoning** (Successful):
+**Example Chain-of-Thought Reasoning:
+
 ```
 Expression: 8 + ((((19 + 17) - (15 - 11)) - ((6 - 5) + (17 - 4))) - 7)
 Ground Truth: 19
@@ -138,7 +140,7 @@ Generated reasoning:
 ```
 Training Stage          Accuracy    Parse Rate    Improvement
 ─────────────────────────────────────────────────────────────
-Foundational (0%)      →    0.00%      0.00%         -
+Foundational           →    0.00%      0.00%         -
 Instruction FT         →   41.40%     88.80%      +41.4%
 LoRA Fine-tune         →   43.40%     83.80%      +2.0%
 GRPO RL Training       →   72.70%     76.60%      +29.3%
@@ -196,7 +198,7 @@ GRPO RL Training       →   72.70%     76.60%      +29.3%
 ## Recommendations
 
 ### For Production Use
-- **Use GRPO model** (`models/grpo/grpo_20260201_153650_018769/final_model.pt`) for best accuracy (72.7%)
+- **Use GRPO model** (`models/grpo_20260201_153650_018769/final_model.pt`) for best accuracy (72.7%)
 - For deployments with size constraints, consider Instruction model (41.4% but more compact)
 
 ### For Further Improvement
@@ -222,10 +224,10 @@ GRPO RL Training       →   72.70%     76.60%      +29.3%
    - Progressive improvement from foundational to GRPO model
 
 2. **Training time per stage** (GPU-accelerated):
-   - Foundational: ~2 hours
+   - Foundational: ~2.5 hours
    - Instruction fine-tuning: ~1 hour
    - LoRA fine-tuning: ~45 minutes
-   - GRPO training: ~3 hours
+   - GRPO training: ~5 hours
 
 3. **All results reproducible**: Commands and model paths documented above
 
