@@ -36,7 +36,7 @@ accelerate launch run_evaluation.py \
 
 #6.1 eval GRPO model
 accelerate launch run_evaluation.py \
-  --model-path models/grpo/grpo_20260208_064824_549081/final_model.pt \
+  --model-path models/grpo_YYYYMMDD_HHMMSS/final_model.pt \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
   --batch-size 1 \

@@ -1,4 +1,5 @@
-
+#!/bin/bash
+set -e
 
 # activate environment
 conda activate ds
@@ -68,7 +69,7 @@ accelerate launch run_grpo_training.py \
   --tokenizer data/tokenizer \
   --instruction-corpus data/instruction_corpus.txt \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
-  --output-dir models/grpo \
+  --output-dir models/ \
   --num-epochs 5 \
   --num-candidates 4 \
   --temperature 0.8 \
@@ -76,7 +77,7 @@ accelerate launch run_grpo_training.py \
   --kl-penalty-coef 0.05
 
 
-GRPO_DIR=$(ls -td models/grpo/grpo_* | head -n 1)
+GRPO_DIR=$(ls -td models/grpo_* | head -n 1)
 GRPO_CKPT="${GRPO_DIR}/final_model.pt"
 
 

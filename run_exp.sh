@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# exit immediately if a command exits with a non-zero status
+set -e
+
 # activate environment
 conda activate ds
 
@@ -133,7 +136,7 @@ accelerate launch run_grpo_training.py \
   --tokenizer data/tokenizer \
   --instruction-corpus data/instruction_corpus.txt \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
-  --output-dir models/grpo \
+  --output-dir models/ \
   --num-epochs 10 \
   --num-candidates 4 \
   --temperature 0.8 \
@@ -143,7 +146,7 @@ accelerate launch run_grpo_training.py \
   --early-stopping-patience 2
 
 # set GRPO path
-GRPO_DIR=$(ls -td models/grpo/grpo_* | head -n 1)
+GRPO_DIR=$(ls -td models/grpo_* | head -n 1)
 GRPO_CKPT="${GRPO_DIR}/final_model.pt"
 
 
