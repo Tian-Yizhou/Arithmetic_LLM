@@ -371,6 +371,15 @@ def train_instruction_model_lora(
                     {
                         'model_state_dict': unwrapped_model.state_dict(),
                         'config': config.to_dict(),
+                        'model_config': {
+                            'vocab_size': unwrapped_model.vocab_size,
+                            'd_model': unwrapped_model.d_model,
+                            'nhead': unwrapped_model.nhead,
+                            'num_layers': unwrapped_model.num_layers,
+                            'dim_feedforward': unwrapped_model.dim_feedforward,
+                            'dropout': unwrapped_model.dropout,
+                            'max_seq_length': unwrapped_model.max_seq_length,
+                        },
                         'tokenizer_vocab_size': vocab_size,
                         'merged': True,
                         'foundational_checkpoint': foundational_checkpoint,

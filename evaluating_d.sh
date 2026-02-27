@@ -1,12 +1,25 @@
 #!/bin/bash
 
 # activate conda
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate tyz
+source /opt/homebrew/Caskroom/miniforge/base/etc/profile.d/conda.sh
+conda activate ds
+
+FOUNDATIONAL_DIR=$(ls -td models/foundational_* | head -n 1)
+FOUNDATIONAL_CKPT="${FOUNDATIONAL_DIR}/best_model.pt"
+
+INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
+INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
+
+LORA_DIR=$(ls -td models/instruction_lora_* | head -n 1)
+LORA_ADAPTER="${LORA_DIR}/lora_adapter.pt"
+LORA_MERGED_OUTPUT="${LORA_DIR}/merged_model.pt"
+
+GRPO_DIR=$(ls -td models/grpo_* | head -n 1)
+GRPO_CKPT="${GRPO_DIR}/checkpoint_step_8500.pt"
 
 #3.1 Evaluate the foundational model, performance would be bad
 accelerate launch run_evaluation.py \
-  --model-path models/foundational_YYYYMMDD_HHMMSS/best_model.pt \
+  --model-path ${FOUNDATIONAL_CKPT} \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
   --num-samples 100 \
@@ -14,21 +27,16 @@ accelerate launch run_evaluation.py \
 
 # 4.1 Evaluate the model
 accelerate launch run_evaluation.py \
-  --model-path models/instruction_YYYYMMDD_HHMMSS/best_model.pt \
+  --model-path ${INSTRUCTION_CKPT} \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
   --batch-size 1 \
   --num-samples 1000
 
-# merge LoRA adapter with the base model to get a standalone model (optional)
-python -m model.merge_lora_adapter \
-  --base-checkpoint models/foundational_YYYYMMDD_HHMMSS/best_model.pt \
-  --adapter-path models/instruction_lora_YYYYMMDD_HHMMSS/lora_adapter.pt \
-  --output-path models/instruction_lora_YYYYMMDD_HHMMSS/merged_model.pt
 
 # 5.1 Evaluate the LoRA merged model (optional)
 accelerate launch run_evaluation.py \
-  --model-path models/instruction_lora_YYYYMMDD_HHMMSS/merged_model.pt \
+  --model-path ${LORA_MERGED_OUTPUT} \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
   --batch-size 1 \
@@ -36,7 +44,7 @@ accelerate launch run_evaluation.py \
 
 #6.1 eval GRPO model
 accelerate launch run_evaluation.py \
-  --model-path models/grpo_YYYYMMDD_HHMMSS/final_model.pt \
+  --model-path ${GRPO_CKPT} \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
   --batch-size 1 \

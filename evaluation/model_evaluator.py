@@ -253,11 +253,8 @@ class ModelEvaluator:
             if 'model_config' in checkpoint:
                 model_config = dict(checkpoint['model_config'])
                 model_config["vocab_size"] = len(self.tokenizer.token2id)
-                print(f"[DEBUG] Using model_config from checkpoint: {model_config}")
                 self.model = ArithmeticTransformer(**model_config)
             elif 'config' in checkpoint:
-                print(f"[DEBUG] model_config NOT found, falling back to 'config'")
-                print(f"[DEBUG] checkpoint keys: {list(checkpoint.keys())}")
                 config = checkpoint['config']
                 self.model = ArithmeticTransformer(
                     vocab_size=len(self.tokenizer.token2id),
@@ -275,10 +272,19 @@ class ModelEvaluator:
                 )
 
             # Load model weights
-            if 'model_state_dict' in checkpoint:
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-            else:
-                self.model.load_state_dict(checkpoint)
+            state_dict = checkpoint.get('model_state_dict', checkpoint)
+
+            # If the checkpoint was saved with LoRA layers still injected,
+            # the state dict contains keys like "q_proj.base_layer.weight"
+            # and "q_proj.lora_A/lora_B" instead of plain "q_proj.weight".
+            # Merge LoRA weights into base weights before loading.
+            has_lora_keys = any('.base_layer.' in k for k in state_dict)
+            if has_lora_keys:
+                from training.train_foundational import _merge_lora_state_dict
+                config_dict = checkpoint.get('config', {})
+                state_dict = _merge_lora_state_dict(state_dict, config_dict)
+
+            self.model.load_state_dict(state_dict)
 
         # Place model on device (no DDP wrapping needed for inference)
         self.model.to(self.device)
