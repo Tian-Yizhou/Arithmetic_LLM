@@ -93,7 +93,7 @@ accelerate launch run_instruction_training_d.py \
     --num-epochs 35
 
 # set intruction model path
-INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
+INSTRUCTION_DIR=$(ls -td models/instruction_* | grep -v lora | head -n 1)
 INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 ```
 
@@ -130,10 +130,10 @@ LORA_MERGED_OUTPUT="${LORA_DIR}/merged_model.pt"
 # 2.4 GRPO training
 echo ">>> Starting GRPO Training..."
 
-accelerate launch run_grpo_training_d.py \
+accelerate launch run_grpo_training.py \
   --tokenizer data/tokenizer \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
-  --output-dir models/grpo \
+  --output-dir models/ \
   --num-epochs 5 \
   --num-candidates 4 \
   --temperature 0.8 \
@@ -141,7 +141,7 @@ accelerate launch run_grpo_training_d.py \
   --kl-penalty-coef 0.05
 
 # set GRPO path
-GRPO_DIR=$(ls -td models/grpo/grpo_* | head -n 1)
+GRPO_DIR=$(ls -td models/grpo_* | head -n 1)
 GRPO_CKPT="${GRPO_DIR}/final_model.pt"
 ```
 

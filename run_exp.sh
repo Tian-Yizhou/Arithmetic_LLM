@@ -93,7 +93,7 @@ accelerate launch run_instruction_training.py \
   --early-stopping-patience 2
 
 # set intruction model path
-INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
+INSTRUCTION_DIR=$(ls -td models/instruction_* | grep -v lora | head -n 1)
 INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 
 

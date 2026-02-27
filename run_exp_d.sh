@@ -36,7 +36,7 @@ accelerate launch run_instruction_training.py \
     --num-epochs 35
 
 
-INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
+INSTRUCTION_DIR=$(ls -td models/instruction_* | grep -v lora | head -n 1)
 INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 
 

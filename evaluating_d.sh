@@ -7,7 +7,7 @@ conda activate ds
 FOUNDATIONAL_DIR=$(ls -td models/foundational_* | head -n 1)
 FOUNDATIONAL_CKPT="${FOUNDATIONAL_DIR}/best_model.pt"
 
-INSTRUCTION_DIR=$(ls -td models/instruction_* | head -n 1)
+INSTRUCTION_DIR=$(ls -td models/instruction_* | grep -v lora | head -n 1)
 INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 
 LORA_DIR=$(ls -td models/instruction_lora_* | head -n 1)
