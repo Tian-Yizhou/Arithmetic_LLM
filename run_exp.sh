@@ -64,9 +64,9 @@ accelerate launch run_foundational_training.py \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
   --max-seq-length 512 \
-  --batch-size 16 \
+  --batch-size 32 \
   --learning-rate 4e-4 \
-  --num-epochs 7 \
+  --num-epochs 10 \
   --early-stopping \
   --early-stopping-patience 2
 
@@ -85,7 +85,7 @@ accelerate launch run_instruction_training.py \
   --instruction-corpus-path data/instruction_corpus.txt \
   --tokenizer-path data/tokenizer \
   --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
-  --batch-size 8 \
+  --batch-size 32 \
   --gradient-accumulation-steps 1 \
   --learning-rate 2e-5 \
   --num-epochs 20 \
@@ -111,10 +111,10 @@ accelerate launch run_instruction_training_lora.py \
   --num-epochs 20 \
   --lora-rank 16 \
   --lora-alpha 32 \
-  --lora-target-modules attention,feedforward \
+  --lora-target-modules attention \
   --lora-dropout 0.1 \
   --save-merged-model \
-  --batch-size 8 \
+  --batch-size 16 \
   --learning-rate 1e-4 \
   --gradient-accumulation-steps 1 \
   --early-stopping \
@@ -137,7 +137,7 @@ accelerate launch run_grpo_training.py \
   --instruction-corpus data/instruction_corpus.txt \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
   --output-dir models/ \
-  --num-epochs 10 \
+  --num-epochs 5 \
   --num-candidates 4 \
   --temperature 0.8 \
   --batch-size 8 \
