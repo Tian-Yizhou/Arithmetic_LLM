@@ -1,9 +1,7 @@
 """Configuration module for GRPO training."""
 
 from dataclasses import dataclass
-from typing import Any, Dict
-
-import torch
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -14,11 +12,14 @@ class GRPOConfig:
         learning_rate: Learning rate for optimizer
         batch_size: Batch size for training
         num_epochs: Number of training epochs
-        warmup_steps: Number of warmup steps for learning rate scheduler
+        warmup_steps: Explicit number of warmup updates. None means "use
+            warmup_ratio"; an explicit value (including 0) overrides the ratio.
+        warmup_ratio: Fraction of all optimizer updates used for warmup when
+            warmup_steps is None
         gradient_clip: Maximum gradient norm for clipping
-        save_every: Save checkpoint every N steps
-        eval_every: Evaluate model every N steps
-        device: Device for training ('cuda', 'mps', or 'cpu')
+        save_every: Save checkpoint every N optimizer updates
+        eval_every: Evaluate on the validation prompts every N optimizer
+            updates (and always at the end of each epoch)
         num_candidates: Number of candidates per prompt
         temperature: Sampling temperature
         top_k: Top-k sampling cutoff
@@ -28,20 +29,20 @@ class GRPOConfig:
         max_gen_length: Maximum generation length
         gradient_accumulation_steps: Steps for gradient accumulation
         log_every: Print training progress every N steps
+        mixed_precision: 'no', 'fp16', or 'bf16'; passed to the Accelerator
+        seed: Seed for data shuffling, the validation split and sampling
+        val_size: Number of prompts held out for validation (0 disables
+            validation, best-model saving and early stopping)
     """
 
     learning_rate: float = 1e-5
     batch_size: int = 8
     num_epochs: int = 3
-    warmup_steps: int = 100
+    warmup_steps: Optional[int] = None
+    warmup_ratio: float = 0.05
     gradient_clip: float = 1.0
     save_every: int = 500
     eval_every: int = 250
-    device: str = (
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
-    )
 
     num_candidates: int = 4
     temperature: float = 0.8
@@ -53,6 +54,9 @@ class GRPOConfig:
 
     gradient_accumulation_steps: int = 1
     log_every: int = 50
+    mixed_precision: str = "fp16"
+    seed: int = 42
+    val_size: int = 256
 
     # Early stopping configuration
     early_stopping: bool = False
@@ -80,9 +84,14 @@ class GRPOConfig:
                 f"num_epochs must be positive, got {self.num_epochs}"
             )
 
-        if self.warmup_steps < 0:
+        if self.warmup_steps is not None and self.warmup_steps < 0:
             raise ValueError(
-                f"warmup_steps must be non-negative, got {self.warmup_steps}"
+                f"warmup_steps must be non-negative or None, got {self.warmup_steps}"
+            )
+
+        if not 0 <= self.warmup_ratio < 1:
+            raise ValueError(
+                f"warmup_ratio must be in [0, 1), got {self.warmup_ratio}"
             )
 
         if self.gradient_clip <= 0:
@@ -98,21 +107,6 @@ class GRPOConfig:
         if self.eval_every <= 0:
             raise ValueError(
                 f"eval_every must be positive, got {self.eval_every}"
-            )
-
-        if self.device not in ["cuda", "mps", "cpu"]:
-            raise ValueError(
-                f"device must be 'cuda', 'mps', or 'cpu', got {self.device}"
-            )
-
-        if self.device == "cuda" and not torch.cuda.is_available():
-            raise ValueError(
-                "device is set to 'cuda' but CUDA is not available"
-            )
-
-        if self.device == "mps" and not torch.backends.mps.is_available():
-            raise ValueError(
-                "device is set to 'mps' but MPS is not available"
             )
 
         if self.num_candidates < 2:
@@ -160,6 +154,20 @@ class GRPOConfig:
                 f"log_every must be positive, got {self.log_every}"
             )
 
+        if self.mixed_precision not in ("no", "fp16", "bf16"):
+            raise ValueError(
+                f"mixed_precision must be 'no', 'fp16' or 'bf16', got {self.mixed_precision}"
+            )
+
+        if self.seed < 0:
+            raise ValueError(f"seed must be non-negative, got {self.seed}")
+
+        if self.val_size < 0:
+            raise ValueError(f"val_size must be non-negative, got {self.val_size}")
+
+        if self.early_stopping and self.val_size == 0:
+            raise ValueError("early_stopping needs validation prompts; set val_size > 0")
+
         if self.early_stopping_patience <= 0:
             raise ValueError(
                 f"early_stopping_patience must be positive, got {self.early_stopping_patience}"
@@ -177,10 +185,10 @@ class GRPOConfig:
             "batch_size": self.batch_size,
             "num_epochs": self.num_epochs,
             "warmup_steps": self.warmup_steps,
+            "warmup_ratio": self.warmup_ratio,
             "gradient_clip": self.gradient_clip,
             "save_every": self.save_every,
             "eval_every": self.eval_every,
-            "device": self.device,
             "num_candidates": self.num_candidates,
             "temperature": self.temperature,
             "top_k": self.top_k,
@@ -190,6 +198,9 @@ class GRPOConfig:
             "max_gen_length": self.max_gen_length,
             "gradient_accumulation_steps": self.gradient_accumulation_steps,
             "log_every": self.log_every,
+            "mixed_precision": self.mixed_precision,
+            "seed": self.seed,
+            "val_size": self.val_size,
             "early_stopping": self.early_stopping,
             "early_stopping_patience": self.early_stopping_patience,
             "early_stopping_epsilon": self.early_stopping_epsilon,
