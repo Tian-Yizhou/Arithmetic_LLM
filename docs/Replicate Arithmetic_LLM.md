@@ -63,7 +63,7 @@ python -m train_tokenizer \
 # Train fundational model
 echo ">>> Starting Foundational Training..."
 
-accelerate launch run_foundational_training_d.py \
+accelerate launch run_foundational_training.py \
   --corpus-path data/foundational_corpus.txt \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
@@ -83,7 +83,7 @@ FOUNDATIONAL_CKPT="${FOUNDATIONAL_DIR}/best_model.pt"
 # Train instruction-tuned model
 echo ">>> Starting Instruction Training..."
 
-accelerate launch run_instruction_training_d.py \
+accelerate launch run_instruction_training.py \
     --instruction-corpus-path data/instruction_corpus.txt \
     --tokenizer-path data/tokenizer \
     --foundational-checkpoint "$FOUNDATIONAL_CKPT" \
@@ -103,7 +103,7 @@ INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 # Fine-tune with LoRA adapters
 echo ">>> Starting LoRA Training..."
 
-accelerate launch run_instruction_training_lora_d.py \
+accelerate launch run_instruction_training_lora.py \
   --instruction-corpus-path data/instruction_corpus.txt \
   --output-dir models/ \
   --tokenizer-path data/tokenizer \
@@ -132,6 +132,7 @@ echo ">>> Starting GRPO Training..."
 
 accelerate launch run_grpo_training.py \
   --tokenizer data/tokenizer \
+  --instruction-corpus data/instruction_corpus.txt \
   --sft-checkpoint "$INSTRUCTION_CKPT" \
   --output-dir models/ \
   --num-epochs 5 \
@@ -140,9 +141,10 @@ accelerate launch run_grpo_training.py \
   --batch-size 8 \
   --kl-penalty-coef 0.05
 
-# set GRPO path
+# set GRPO path (best validation reward; final model if validation was disabled)
 GRPO_DIR=$(ls -td models/grpo_* | head -n 1)
-GRPO_CKPT="${GRPO_DIR}/final_model.pt"
+GRPO_CKPT="${GRPO_DIR}/best_model.pt"
+[ -f "$GRPO_CKPT" ] || GRPO_CKPT="${GRPO_DIR}/final_model.pt"
 ```
 
 ## 3. Model Evaluation
@@ -154,7 +156,7 @@ GRPO_CKPT="${GRPO_DIR}/final_model.pt"
 # 3.1 Evaluate Foundational Model
 echo ">>> Evaluating Foundational Model..."
 
-accelerate launch run_evaluation_d.py \
+accelerate launch run_evaluation.py \
   --model-path "$FOUNDATIONAL_CKPT" \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
@@ -168,7 +170,7 @@ accelerate launch run_evaluation_d.py \
 # 3.2 Evaluate Instruction
 echo ">>> Evaluating Instruction Model..."
 
-accelerate launch run_evaluation_d.py \
+accelerate launch run_evaluation.py \
   --model-path "$INSTRUCTION_CKPT" \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
@@ -182,7 +184,7 @@ accelerate launch run_evaluation_d.py \
 # 3.3 Evaluate LoRA (Includes Merge Step)
 
 # merge LoRA adapter with the base model
-python model/merge_lora_adapter.py \
+python -m model.merge_lora_adapter \
   --base-checkpoint "$FOUNDATIONAL_CKPT" \
   --adapter-path "$LORA_ADAPTER" \
   --output-path "$LORA_MERGED_OUTPUT"
@@ -190,7 +192,7 @@ python model/merge_lora_adapter.py \
 # Evaluate the LoRA merged model
 echo ">>> Evaluating LoRA-merged Model..."
 
-accelerate launch run_evaluation_d.py \
+accelerate launch run_evaluation.py \
   --model-path "$LORA_MERGED_OUTPUT" \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \
@@ -204,7 +206,7 @@ accelerate launch run_evaluation_d.py \
 # 3.4 Evaluate GRPO
 echo ">>> Evaluating GRPO Model..."
 
-accelerate launch run_evaluation_d.py \
+accelerate launch run_evaluation.py \
   --model-path "$GRPO_CKPT" \
   --tokenizer-path data/tokenizer \
   --max-gen-length 512 \

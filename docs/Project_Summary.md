@@ -1,5 +1,7 @@
 # Arithmetic LLM Training System - Summary
 
+> **Provenance.** The runs and results in this summary (February 1, 2026) were produced with the **original single-GPU code** (the version later committed as the non-`_d` files of the first commit, `be814c0`), before the Accelerate refactor. They are not measurements of the distributed version, which has not been re-benchmarked yet. Evaluation settings were the evaluator's defaults at the time: generated expressions with operands 1–20 and nesting depth up to 5 (training data used depth 4), sampled at temperature 0.8. See [Audit_and_Fix_Plan.md](Audit_and_Fix_Plan.md) for the audit of the refactor.
+
 
 
 ## Completed Steps

@@ -120,7 +120,11 @@ The training pipeline has four stages, each building on the previous one:
 2. **Instruction Fine-tuning** -- Fine-tune on prompt/response pairs (full-parameter or LoRA)
 3. **GRPO** -- Reinforce correct reasoning with reward-based optimization
 
-All distributed training scripts are launched with `accelerate launch`. Training uses mixed-precision (fp16) by default.
+All distributed training scripts are launched with `accelerate launch` (e.g. `accelerate launch --num_processes 4 run_foundational_training.py ...`). Training uses fp16 mixed precision by default; choose it with the script's `--mixed-precision` flag (`fp16`, `bf16` or `no`), which takes precedence over `accelerate launch --mixed_precision`.
+
+Checkpointing supports single-device and DDP (multi-GPU) training. The scripts refuse to start under FSDP or DeepSpeed, whose sharded state they do not save.
+
+**Configuration precedence (supervised stages):** an explicit command-line flag overrides the value in the `--config` JSON file, which overrides the stage default. The run directory's `training_config.json` records the values actually used and can be passed back with `--config`.
 
 
 ### 2.1 Train Foundational Model
@@ -135,7 +139,7 @@ accelerate launch run_foundational_training.py \
   --num-epochs 8 \
   --batch-size 32 \
   --learning-rate 2e-4 \
-  --warmup-steps 1000 \
+  --warmup-ratio 0.05 \
   --max-seq-length 512 \
   --gradient-accumulation-steps 1 \
   --early-stopping \
@@ -149,16 +153,21 @@ accelerate launch run_foundational_training.py \
 - `--learning-rate`: Learning rate (default: 1e-4)
 - `--batch-size`: Batch size per device (default: 32)
 - `--num-epochs`: Number of training epochs (default: 10)
-- `--warmup-steps`: Number of steps for linear learning rate warm-up from 0 to the target rate (default: 1000)
+- `--warmup-ratio`: Fraction of all optimizer updates used for linear learning-rate warm-up from 0 to the target rate (default: 0.05)
+- `--warmup-steps`: Exact number of warm-up updates; overrides `--warmup-ratio` when given (0 disables warm-up). A value larger than the total number of updates is rejected
 - `--gradient-clip`: Maximum gradient norm; gradients exceeding this are scaled down to prevent training instability (default: 1.0)
 - `--gradient-accumulation-steps`: Accumulate gradients over N forward passes before updating weights, effectively simulating a larger batch size with limited GPU memory (default: 1)
-- `--save-every`: Save a checkpoint every N steps (default: 1000)
-- `--early-stopping`: Enable early stopping based on validation loss improvement ratio
+- `--mixed-precision`: `fp16` (default), `bf16` or `no`
+- `--seed`: Seed for the train/validation split, the batch order and initialization (default: 42)
+- `--save-every`: Save a checkpoint every N optimizer updates (default: 1000)
+- `--early-stopping` / `--no-early-stopping`: Enable early stopping based on the validation loss improvement ratio (default: off)
 - `--early-stopping-patience`: Number of consecutive epochs with insufficient improvement before stopping (default: 3)
 - `--early-stopping-epsilon`: Minimum loss improvement ratio required to continue training (default: 1e-4)
-- `--resume-checkpoint`: Path to a checkpoint file to resume interrupted training
-- `--config`: Path to training configuration JSON file (overrides CLI training parameters)
+- `--resume-checkpoint`: Path to a checkpoint of this stage to resume an interrupted run (see [section 5](#5-resuming-from-checkpoints))
+- `--config`: Path to a training configuration JSON file; explicit flags override its values
 - `--model-config`: Path to model architecture JSON file (overrides CLI model parameters)
+
+The learning-rate schedule is sized in optimizer updates per process: `ceil(batches per process / accumulation steps) × epochs`. It therefore ends at the last update on any number of GPUs. The validation loss is the mean loss per predicted token over the whole validation split, the same on every process.
 
 **Model Architecture Parameters:**
 - `--d-model`: Embedding dimension (default: 256)
@@ -169,13 +178,14 @@ accelerate launch run_foundational_training.py \
 - `--max-seq-length`: Maximum sequence length the model can process (default: 512)
 
 **Output:**
-Training creates a timestamped directory (e.g. `models/foundational_20260225_143000/`) containing:
+Training creates a timestamped directory (e.g. `models/foundational_20260225_143000_123456/`) containing:
 - `best_model.pt` -- Best model checkpoint (lowest validation loss)
 - `final_model.pt` -- Final model checkpoint
-- `checkpoint_step_N.pt` -- Intermediate checkpoints
+- `checkpoint_step_N.pt` -- Intermediate checkpoints (every `--save-every` updates)
 - `training_config.json`, `model_config.json` -- Saved configurations
+- `run_info.json` -- Resolved schedule (processes, batches and updates per epoch, warm-up) and data identity
 - `training_log.json` -- Per-epoch metrics
-- `training_summary.json` -- Final training summary
+- `training_summary.json` -- Final training summary, including the epochs actually completed and whether early stopping ended the run
 
 
 ### 2.2 Instruction Fine-tuning
@@ -198,11 +208,10 @@ accelerate launch run_instruction_training.py \
 - `--foundational-checkpoint`: Path to foundational model checkpoint from step 2.1 (required)
 - `--learning-rate`: Default 5e-5 (lower than foundational training to avoid catastrophic forgetting)
 - `--num-epochs`: Default 5
-- `--warmup-steps`: Default 500
 - `--save-every`: Default 500
-- `--resume-checkpoint`: Path to checkpoint to resume training
+- `--resume-checkpoint`: Path to an instruction-training checkpoint to resume training
 
-Other training parameters (`--gradient-accumulation-steps`, `--early-stopping`, etc.) are the same as in 2.1.
+Other training parameters (`--warmup-ratio`, `--gradient-accumulation-steps`, `--mixed-precision`, `--seed`, `--early-stopping`, etc.) are the same as in 2.1.
 
 
 ### 2.3 LoRA Instruction Fine-tuning
@@ -231,7 +240,9 @@ accelerate launch run_instruction_training_lora.py \
 - `--lora-target-modules`: Comma-separated list of modules to apply LoRA to (default: `attention`). Options: `attention`, `feedforward`
 - `--lora-dropout`: Dropout applied to LoRA layers (default: 0.0)
 - `--save-merged-model`: After training, merge LoRA weights into the base model and save a standalone checkpoint for direct inference
-- `--resume-checkpoint`: Path to checkpoint to resume training
+- `--resume-checkpoint`: Path to a LoRA-training checkpoint to resume training
+
+LoRA settings follow the same precedence as the training settings: an explicit `--lora-*` flag overrides the `lora_config` in a `--config` JSON file, which overrides the defaults above.
 
 Other training parameters are the same as in 2.2.
 
@@ -274,13 +285,21 @@ accelerate launch run_grpo_training.py \
 - `--top-k`: Top-k sampling; only sample from the top k most probable tokens (default: 50)
 - `--top-p`: Nucleus sampling; sample from the smallest set of tokens whose cumulative probability exceeds p (default: 0.9)
 - `--kl-penalty-coef`: KL divergence penalty coefficient; regularizes the policy to stay close to the reference model, preventing mode collapse (default: 0.05)
-- `--max-gen-length`: Maximum tokens the model can generate per candidate response (default: 512)
-- `--eval-every`: Run validation every N training steps (default: 250)
+- `--max-gen-length`: Maximum length of a candidate sequence, prompt included, in tokens (default: 512; capped at the model's `max_seq_length - 2`)
+- `--warmup-ratio` / `--warmup-steps`: As in 2.1 (default: 5% of all updates)
+- `--gradient-accumulation-steps`: Number of prompt batches per optimizer update (default: 1). The last, shorter group of an epoch also produces an update
+- `--val-size`: Number of prompts held out for validation (default: 256). Validation measures the share of held-out prompts answered correctly (one sampled answer each, with a fixed seed), and drives best-model saving and early stopping. `0` disables validation
+- `--eval-every`: Run validation every N optimizer updates, and always at the end of each epoch (default: 250)
+- `--save-every`: Save a checkpoint every N optimizer updates (default: 500)
+- `--seed`: Seed for shuffling the prompts, the validation split and sampling (default: 42)
+- `--mixed-precision`: `fp16` (default), `bf16` or `no`
 - `--log-every`: Print training metrics every N steps (default: 50)
 - `--candidate-sub-batch-size`: Process candidates in smaller sub-batches to reduce peak GPU memory; set this if you encounter OOM errors (default: None, process all at once)
 - `--filter-invalid-instruction` / `--no-filter-invalid-instruction`: Filter out instruction entries with invalid or mismatched expressions (default: enabled)
-- `--resume-checkpoint`: Path to GRPO checkpoint to resume training
-- `--early-stopping`, `--early-stopping-patience`, `--early-stopping-epsilon`: Same as in 2.1
+- `--resume-checkpoint`: Path to a GRPO checkpoint to resume training. Pass the same `--sft-checkpoint` as the original run: it provides the fixed reference model for the KL penalty, and a different file is rejected
+- `--early-stopping`, `--early-stopping-patience`, `--early-stopping-epsilon`: As in 2.1, applied to the validation reward rate and counted in evaluations rather than epochs (requires `--val-size` > 0)
+
+The prompts are split so that every process gets the same number of training and validation prompts (at most `num_processes - 1` prompts per part are dropped); otherwise the processes would fall out of step and hang.
 
 **Parameters for `generated` data mode:**
 - `--num-samples`: Number of expressions to generate (default: 1000)
@@ -289,8 +308,10 @@ accelerate launch run_grpo_training.py \
 
 **Output:**
 - `checkpoint_step_N.pt` -- Periodic checkpoints
+- `best_model.pt` -- Checkpoint with the best validation reward rate
 - `final_model.pt` -- Final checkpoint
-- `grpo_training_log.json` -- Training metrics log
+- `grpo_training_log.json` -- Per-batch training metrics, with the validation reward rate where one was measured
+- `grpo_training_summary.json` -- Steps, epochs completed, early-stopping outcome, best validation reward rate, schedule and data identity
 
 
 ## 3. Model Evaluation
@@ -311,7 +332,7 @@ accelerate launch run_evaluation.py \
 - `--tokenizer-path`: Path to tokenizer directory (required)
 - `--base-checkpoint`: Path to base model checkpoint, required when evaluating a LoRA adapter directly (without merging first)
 - `--num-samples`: Number of test expressions to generate (default: 1000)
-- `--max-depth`: Maximum depth of test expressions (default: 5)
+- `--max-depth`: Maximum depth of test expressions (default: 5). Note that `run_exp.sh` generates training data with depth 4, so the default also tests deeper expressions than the model was trained on; pass `--max-depth 4` to evaluate in-distribution
 - `--num-range`: Number range for test expressions (default: 1 20)
 - `--max-gen-length`: Maximum generation length in tokens (default: 512)
 - `--batch-size`: Batch size for inference (default: 1)
@@ -371,7 +392,7 @@ accelerate launch run_evaluation.py \
 
 ```bash
 accelerate launch run_evaluation.py \
-  --model-path models/grpo_YYYYMMDD_HHMMSS/final_model.pt \
+  --model-path models/grpo_YYYYMMDD_HHMMSS_ffffff/best_model.pt \
   --tokenizer-path data/tokenizer \
   --num-samples 1000
 ```
@@ -428,7 +449,7 @@ Type `exit`, `quit`, or `q` to exit. Press `Ctrl+C` to interrupt.
 
 ## 5. Resuming from Checkpoints
 
-All training scripts support resuming from a saved checkpoint via `--resume-checkpoint`. This restores the model weights, optimizer state, learning rate scheduler, and the epoch/step counters so training continues exactly where it left off.
+All four training scripts resume an interrupted run with `--resume-checkpoint`. Pass the same data and training settings as the original run, and point to any checkpoint of that run (`checkpoint_step_N.pt`, `best_model.pt` or `final_model.pt`):
 
 ```bash
 accelerate launch run_foundational_training.py \
@@ -437,12 +458,18 @@ accelerate launch run_foundational_training.py \
   --output-dir models \
   --num-epochs 10 \
   --batch-size 32 \
-  --resume-checkpoint models/foundational_YYYYMMDD_HHMMSS/checkpoint_step_5000.pt
+  --resume-checkpoint models/foundational_YYYYMMDD_HHMMSS_ffffff/checkpoint_step_5000.pt
 ```
 
-The same `--resume-checkpoint` flag works for all four training scripts (`run_foundational_training.py`, `run_instruction_training.py`, `run_instruction_training_lora.py`, `run_grpo_training.py`).
+What is restored: model weights, optimizer state (Adam moments), learning-rate schedule position, fp16 loss scale, each process's random-number state, the exact position in the data (epoch and batch, so a checkpoint from the middle of an epoch continues with the remaining batches of that epoch), the best validation result, the early-stopping counters and the training log. For GRPO, the reference model is the `--sft-checkpoint` model, as in the original run. A resumed run ends with the same weights as an uninterrupted run with the same settings (the tests check this to the bit on CPU; GPU kernels may introduce tiny numerical differences).
 
-> **Note:** When resuming, the foundational trainer can auto-detect and merge LoRA checkpoint weights into a plain model, so you can resume foundational-style training from a LoRA fine-tuned checkpoint.
+Where it writes: into the checkpoint's own run directory. If that directory already contains later progress (a higher-step checkpoint, or a final model when you resume from an earlier checkpoint), a new sibling directory `<run>_resumed_step<N>_<timestamp>` is used instead, so newer files are never overwritten.
+
+What is checked: the resume is refused, with a list of the differences, if the number of processes, batch size, accumulation, number of epochs, warm-up, learning rate, corpus, tokenizer or seed differ from the original run (and, for GRPO, the SFT checkpoint file). These determine the learning-rate schedule and the data order, so continuing with different values would not continue the same run. To train further with different settings, start a new run from the checkpoint's weights instead (e.g. as `--foundational-checkpoint`).
+
+Older checkpoints (written before exact resume was added) still work: weights, optimizer and scheduler are restored and the position is derived from the update count, but the original data order, random state and early-stopping state cannot be recovered. Such a resume always writes to a new directory.
+
+> **LoRA checkpoints:** a LoRA checkpoint can resume LoRA training only. Its weights can be loaded by the evaluator, merged into a plain model, or used as a starting checkpoint, but full-parameter training cannot be *resumed* from it, because its optimizer state covers only the adapter parameters.
 
 
 ## Acknowledgments
