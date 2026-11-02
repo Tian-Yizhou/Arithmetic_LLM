@@ -1,6 +1,6 @@
 # Detailed Usage
 
-This document covers the full pipeline for training and evaluating the Arithmetic LLM, from data generation to interactive inference. All commands use HuggingFace Accelerate for distributed training. The `single_gpu/` directory contains equivalent single-GPU scripts that can be run directly with `python`.
+This document covers the full pipeline for training and evaluating the Arithmetic LLM, from data generation to interactive inference. All training commands use HuggingFace Accelerate for distributed training.
 
 > **Working directory**: All commands assume you are in the project root directory.
 
@@ -22,7 +22,7 @@ python -m data.generate_foundational_plaintext \
 
 **Parameters:**
 - `--num-samples`: Number of expression-evaluation pairs to generate (required)
-- `--max-depth`: Maximum depth of the expression tree (default: 5). Higher depth produces more complex, deeply nested expressions (e.g. depth 3 might yield `(2 + 3) * (4 - 1)`, depth 5 could yield `((2 + 3) * 4 - (1 + 2)) * (5 - 3)`)
+- `--max-depth`: Maximum depth of the expression tree (default: 5). Higher depth produces more complex, deeply nested expressions (e.g. depth 2 might yield `(2 + 3) - (4 - 1)`, depth 4 could yield `(((2 + 3) - 4) - (1 + 2)) + (5 - 3)`)
 - `--num-range`: Min and max of operand values (default: 1 20)
 - `--invalid-rate`: Fraction of intentionally malformed expressions included to teach the model robustness against invalid inputs (default: 0.1)
 - `--output-txt`: Path to save the shuffled plain-text corpus
@@ -52,22 +52,15 @@ python -m data.generate_instruction_corpus_mixed \
 
 This script generates two instruction sets (one with invalid expressions, one without), then merges and shuffles them together.
 
-**Output Format (multi-line prompt/response pairs):**
-```
-Evaluate: 5 + (10 - 3) <think>
-<think>
-Step 1: 10 - 3 = 7
-Expression now: 5 + 7
-Step 2: 5 + 7 = 12
-Expression now: 12
-</think>
-Final Result: 12
+**Output Format (JSONL, one sample per line):**
+```json
+{"expression": "5 + (10 - 3)", "problem": "Evaluate: 5 + (10 - 3)", "solution": "<think>\nStep 1: 10 - 3 = 7\nExpression now: 5 + 7\nStep 2: 5 + 7 = 12\nExpression now: 12\n</think>\nFinal Result: 12", "answer": 12}
 ```
 
 
 ### 1.3 Test Data Generation
 
-Generate a separate test set for evaluation. Use a wider `--num-range` than the training set to test generalization.
+Optionally generate a separate held-out corpus, for example with a wider `--num-range` than the training set. `run_evaluation.py` does not read this file; it generates its own test expressions (see section 3).
 
 ```bash
 python -m data.generate_corpus \
@@ -98,7 +91,7 @@ python -m train_tokenizer \
 
 **Parameters:**
 - `--corpus-path`: Path to training corpus (required)
-- `--vocab-size`: Target vocabulary size (default: 1000). For arithmetic, the actual distinct tokens are ~130-200, so 1000 provides ample headroom
+- `--vocab-size`: Target vocabulary size (default: 1000). Training stops when no more merges are possible (about 275 tokens on the project corpus), so 1000 provides ample headroom
 - `--output-dir`: Directory to save tokenizer files (default: `data/tokenizer`)
 
 **Special Tokens:**
@@ -114,11 +107,12 @@ python -m train_tokenizer \
 
 ## 2. Model Training
 
-The training pipeline has four stages, each building on the previous one:
+The training pipeline has four stages:
 
 1. **Foundational** -- Pre-train the transformer on plain-text arithmetic (next-token prediction)
-2. **Instruction Fine-tuning** -- Fine-tune on prompt/response pairs (full-parameter or LoRA)
-3. **GRPO** -- Reinforce correct reasoning with reward-based optimization
+2. **Instruction Fine-tuning** -- Fine-tune the foundational model on prompt/response pairs (all parameters)
+3. **LoRA Fine-tuning** -- Alternative to stage 2, also starting from the foundational model, that trains only low-rank adapters
+4. **GRPO** -- Starting from a fine-tuned model, reinforce correct reasoning with reward-based optimization
 
 All distributed training scripts are launched with `accelerate launch` (e.g. `accelerate launch --num_processes 4 run_foundational_training.py ...`). Training uses fp16 mixed precision by default; choose it with the script's `--mixed-precision` flag (`fp16`, `bf16` or `no`), which takes precedence over `accelerate launch --mixed_precision`.
 

@@ -1,10 +1,9 @@
 #!/bin/bash
 
+# Run from the project root, in an environment with requirements.txt installed.
+
 # exit immediately if a command exits with a non-zero status
 set -e
-
-# activate environment
-conda activate ds
 
 ## 1. Data Preparation
 
@@ -19,7 +18,7 @@ python -m data.generate_foundational_plaintext \
   --output-txt data/foundational_corpus.txt
 
 
-### 1.2 Tokenizer Training
+### 1.2 Instruction Corpus
 
 
 python -m data.generate_instruction_corpus_mixed \
@@ -30,7 +29,7 @@ python -m data.generate_instruction_corpus_mixed \
   --output-mixed data/instruction_corpus.txt
 
 
-### 1.3 Sequence Analysis
+### 1.3 Test Corpus
 
 
 python -m data.generate_corpus \
@@ -53,10 +52,10 @@ python -m train_tokenizer \
 
 ## 2. Model Training
 
-### 2.1 Train Fundational Model
+### 2.1 Train Foundational Model
 
 
-# Train fundational model
+# Train foundational model
 echo ">>> Starting Foundational Training..."
 
 accelerate launch run_foundational_training.py \
@@ -92,7 +91,7 @@ accelerate launch run_instruction_training.py \
   --early-stopping \
   --early-stopping-patience 2
 
-# set intruction model path
+# set instruction model path
 INSTRUCTION_DIR=$(ls -td models/instruction_* | grep -v lora | head -n 1)
 INSTRUCTION_CKPT="${INSTRUCTION_DIR}/best_model.pt"
 

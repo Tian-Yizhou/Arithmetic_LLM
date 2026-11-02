@@ -1,7 +1,7 @@
 """End-to-end tests of the training entry points (single process, CPU, fp32).
 
 Each test runs the real command-line scripts on a tiny model, so they check
-the behaviour the audit found broken: schedule length, checkpoint survival,
+behaviour that would otherwise fail silently: schedule length, checkpoint survival,
 exact mid-epoch resume, early-stopping metadata and GRPO resume.
 """
 

@@ -48,7 +48,7 @@ on the arithmetic corpus └→ LoRA FT (parameter-efficient)
 | LoRA fine-tuning | 43.4% | 83.8% | +2.0 pts |
 | **GRPO** | **72.7%** | 76.6% | **+29.3 pts** (vs. instruction) |
 
-Provenance: these runs (February 1, 2026) were trained and evaluated with the **original single-GPU code**, before the Accelerate refactor. Each model was evaluated on 1,000 generated test expressions (100 for the foundational model) with the evaluator's defaults at the time: operands 1–20, nesting depth up to 5, sampling at temperature 0.8. The checkpoints and per-model details are listed in [docs/Project_Summary.md](docs/Project_Summary.md). The distributed pipeline has not been re-benchmarked yet; see [docs/Audit_and_Fix_Plan.md](docs/Audit_and_Fix_Plan.md).
+Provenance: these runs (February 1, 2026) were trained and evaluated with the **original single-GPU code**, before the Accelerate refactor. Each model was evaluated on 1,000 generated test expressions (100 for the foundational model) with the evaluator's defaults at the time: operands 1–20, nesting depth up to 5, sampling at temperature 0.8. The checkpoints and per-model details are listed in [docs/Project_Summary.md](docs/Project_Summary.md).
 
 ## Architecture
 
@@ -62,7 +62,7 @@ The following parameters are adjustable.
 | Layers | 6 |
 | FFN hidden dim | 1,024 |
 | Max sequence length | 512 tokens |
-| Tokenizer | Custom BPE (vocab size ~1,000) |
+| Tokenizer | Custom BPE (target vocabulary 1,000; about 275 tokens on the project corpus) |
 | Weight tying | Embedding ↔ output projection |
 | LoRA rank | 16 (alpha = 32) |
 
@@ -89,8 +89,7 @@ Arithmetic_LLM/
 ├── train_tokenizer.py
 ├── demo.py                  # Batch demo with accuracy report
 │
-├── docs/                    # Usage guide, development log, audit records
-└── single_gpu/              # Archived original single-GPU version
+└── docs/                    # Usage guide and training results
 ```
 
 `run_evaluation.py` writes its metrics and sample outputs to `evaluation_results/` (created on first use).
@@ -197,10 +196,7 @@ They cover configuration precedence, exact mid-epoch resume (bit-identical weigh
 | Document | Description |
 |---|---|
 | [Detailed_Usage.md](docs/Detailed_Usage.md) | Full command reference for every pipeline stage |
-| [README_DEV.md](docs/README_DEV.md) | Development log — distributed refactoring, technical challenges, and solutions |
-| [Audit_and_Fix_Plan.md](docs/Audit_and_Fix_Plan.md) | Audit of the refactor: defects found, fixes, and how each was verified |
 | [Project_Summary.md](docs/Project_Summary.md) | Training results, evaluation analysis, and performance breakdown |
-| [Replicate Arithmetic_LLM.md](docs/Replicate%20Arithmetic_LLM.md) | Step-by-step replication guide |
 
 ## Tech Stack
 
