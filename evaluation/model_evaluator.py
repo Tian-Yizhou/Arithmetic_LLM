@@ -240,7 +240,7 @@ class ModelEvaluator:
                 }
             else:
                 model_config = dict(model_config)
-                model_config["vocab_size"] = len(self.tokenizer.token2id)
+                model_config["vocab_size"] = self._checked_vocab_size(model_config.get("vocab_size"))
 
             self.model = ArithmeticTransformer(**model_config)
             if "model_state_dict" in base_checkpoint:
@@ -252,7 +252,7 @@ class ModelEvaluator:
         else:
             if 'model_config' in checkpoint:
                 model_config = dict(checkpoint['model_config'])
-                model_config["vocab_size"] = len(self.tokenizer.token2id)
+                model_config["vocab_size"] = self._checked_vocab_size(model_config.get("vocab_size"))
                 self.model = ArithmeticTransformer(**model_config)
             elif 'config' in checkpoint:
                 config = checkpoint['config']
@@ -280,7 +280,7 @@ class ModelEvaluator:
             # Merge LoRA weights into base weights before loading.
             has_lora_keys = any('.base_layer.' in k for k in state_dict)
             if has_lora_keys:
-                from training.train_foundational import _merge_lora_state_dict
+                from training.common import _merge_lora_state_dict
                 config_dict = checkpoint.get('config', {})
                 state_dict = _merge_lora_state_dict(state_dict, config_dict)
 
@@ -289,6 +289,30 @@ class ModelEvaluator:
         # Place model on device (no DDP wrapping needed for inference)
         self.model.to(self.device)
         self.model.eval()
+
+    def _checked_vocab_size(self, checkpoint_vocab_size: Optional[int]) -> int:
+        """Embedding size to build the model with.
+
+        The checkpoint's own vocab_size is kept so its weights load; a
+        tokenizer larger than that would produce token ids without
+        embeddings. (Equal sizes do not prove identical token ids: use the
+        tokenizer the model was trained with.)
+        """
+        tokenizer_vocab_size = len(self.tokenizer.token2id)
+        if checkpoint_vocab_size is None:
+            return tokenizer_vocab_size
+        if tokenizer_vocab_size > checkpoint_vocab_size:
+            raise ValueError(
+                f"Tokenizer vocab size ({tokenizer_vocab_size}) is larger than the "
+                f"model's vocab size ({checkpoint_vocab_size}); this tokenizer does "
+                "not belong to this checkpoint."
+            )
+        if tokenizer_vocab_size < checkpoint_vocab_size and self.is_main:
+            print(
+                f"Warning: tokenizer vocab size ({tokenizer_vocab_size}) < model vocab "
+                f"size ({checkpoint_vocab_size}); building the model with the checkpoint's size."
+            )
+        return checkpoint_vocab_size
 
     def evaluate(
         self,
