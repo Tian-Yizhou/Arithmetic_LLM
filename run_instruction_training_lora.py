@@ -3,16 +3,44 @@
 
 import argparse
 import json
+from dataclasses import asdict
 
+from configs.cli import add_training_arguments, print_training_config, resolve_training_config
 from configs.lora_config import LoRAConfig
+from training.common import build_accelerator
 from training.train_instruction_lora import train_instruction_model_lora
-from configs.training_config import TrainingConfig
-from accelerate import Accelerator
+
+
+# Stage defaults; a --config JSON file and explicit flags override them.
+DEFAULTS = {
+    "learning_rate": 5e-5,
+    "batch_size": 32,
+    "num_epochs": 5,
+    "save_every": 500,
+}
+
+
+def resolve_lora_config(args: argparse.Namespace, json_lora: LoRAConfig = None) -> LoRAConfig:
+    """LoRA settings with the same precedence: flag > JSON lora_config > default."""
+    values = asdict(json_lora) if json_lora is not None else asdict(LoRAConfig())
+    if args.lora_rank is not None:
+        values["rank"] = args.lora_rank
+    if args.lora_alpha is not None:
+        values["alpha"] = args.lora_alpha
+    if args.lora_target_modules is not None:
+        values["target_modules"] = [
+            module.strip() for module in args.lora_target_modules.split(",") if module.strip()
+        ]
+    if args.lora_dropout is not None:
+        values["dropout"] = args.lora_dropout
+    lora_config = LoRAConfig(**values)
+    lora_config.validate()
+    return lora_config
 
 
 def main():
     """Fine-tune instruction model with LoRA from command line."""
-    
+
     parser = argparse.ArgumentParser(
         description="Fine-tune arithmetic LLM with LoRA adapters"
     )
@@ -24,33 +52,13 @@ def main():
     parser.add_argument("--output-dir", type=str, default="models", help="Directory to save model checkpoints")
 
     # Training configuration
-    parser.add_argument("--config", type=str, help="Path to training configuration JSON file")
-    parser.add_argument("--learning-rate", type=float, default=5e-5, help="Learning rate (default: 5e-5)")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size per device (default: 32)")
-    parser.add_argument("--num-epochs", type=int, default=5, help="Number of fine-tuning epochs (default: 5)")
-    parser.add_argument("--warmup-steps", type=int, default=500, help="Number of warmup steps (default: 500)")
-    parser.add_argument("--gradient-clip", type=float, default=1.0, help="Gradient clipping value (default: 1.0)")
-    parser.add_argument("--save-every", type=int, default=500, help="Save checkpoint every N steps (default: 500)")
-    
-    # Gradient accumulation.
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=1, help="Number of steps to accumulate gradients (default: 1)")
-
-    # Early stopping
-    parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping based on validation loss improvement ratio")
-    parser.add_argument("--early-stopping-patience", type=int, default=3, help="Number of epochs with insufficient improvement before stopping (default: 3)")
-    parser.add_argument("--early-stopping-epsilon", type=float, default=1e-4, help="Minimum loss improvement ratio to continue training (default: 1e-4)")
-
-    # Resume from checkpoint
-    parser.add_argument("--resume-checkpoint", type=str, default=None, help="Path to checkpoint file to resume training from")
-
-    # Device argument is kept for CLI compatibility but ignored by Accelerate.
-    parser.add_argument("--device", type=str, default="auto", help="Ignored when using accelerate")
+    add_training_arguments(parser, DEFAULTS)
 
     # LoRA configuration
-    parser.add_argument("--lora-rank", type=int, default=8, help="LoRA rank (default: 8)")
-    parser.add_argument("--lora-alpha", type=float, default=16.0, help="LoRA alpha scaling (default: 16.0)")
-    parser.add_argument("--lora-target-modules", type=str, default="attention", help="Comma-separated target modules")
-    parser.add_argument("--lora-dropout", type=float, default=0.0, help="LoRA dropout rate (default: 0.0)")
+    parser.add_argument("--lora-rank", type=int, default=None, help="LoRA rank (default: 8)")
+    parser.add_argument("--lora-alpha", type=float, default=None, help="LoRA alpha scaling (default: 16.0)")
+    parser.add_argument("--lora-target-modules", type=str, default=None, help="Comma-separated target modules (default: attention)")
+    parser.add_argument("--lora-dropout", type=float, default=None, help="LoRA dropout rate (default: 0.0)")
     parser.add_argument("--save-merged-model", action="store_true", help="Save merged model after training")
 
     # Model configuration
@@ -58,52 +66,26 @@ def main():
 
     args = parser.parse_args()
 
-    # Initialize Accelerator after parsing args to use gradient_accumulation_steps.
-    accelerator = Accelerator(
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision="fp16"
-    )
-
-    # Load or create training configuration
-    if args.config:
-        if accelerator.is_local_main_process:
-            print(f"Loading training configuration from: {args.config}")
-        config = TrainingConfig.from_json(args.config)
-    else:
-        # Create training config from CLI arguments.
-        config = TrainingConfig(
-            learning_rate=args.learning_rate,
-            batch_size=args.batch_size,
-            num_epochs=args.num_epochs,
-            warmup_steps=args.warmup_steps,
-            gradient_clip=args.gradient_clip,
-            save_every=args.save_every,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            early_stopping=args.early_stopping,
-            early_stopping_patience=args.early_stopping_patience,
-            early_stopping_epsilon=args.early_stopping_epsilon,
-        )
-
-    target_modules = [
-        module.strip() for module in args.lora_target_modules.split(",") if module.strip()
-    ]
-    lora_config = LoRAConfig(
-        rank=args.lora_rank,
-        alpha=args.lora_alpha,
-        target_modules=target_modules,
-        dropout=args.lora_dropout
+    # Resolve the configuration first, then build the one Accelerator from it.
+    config = resolve_training_config(args, DEFAULTS)
+    lora_config = resolve_lora_config(args, config.lora_config)
+    config.lora_config = lora_config
+    accelerator = build_accelerator(
+        mixed_precision=config.mixed_precision,
+        gradient_accumulation_steps=config.gradient_accumulation_steps,
+        seed=config.seed
     )
 
     # Load model configuration if provided
     model_config = None
     if args.model_config:
-        if accelerator.is_local_main_process:
+        if accelerator.is_main_process:
             print(f"Loading model configuration from: {args.model_config}")
         with open(args.model_config, 'r') as f:
             model_config = json.load(f)
 
     # Display configuration (main process only).
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print("\n" + "=" * 60)
         print("LORA INSTRUCTION FINE-TUNING (Accelerated)")
         print("=" * 60)
@@ -111,19 +93,15 @@ def main():
         print(f"Tokenizer: {args.tokenizer_path}")
         print(f"Foundational checkpoint: {args.foundational_checkpoint}")
         print(f"Output directory: {args.output_dir}")
+        print(f"Processes: {accelerator.num_processes}")
+        if args.config:
+            print(f"Training configuration file: {args.config}")
         print("\nLoRA Configuration:")
         print(f"  Rank: {lora_config.rank}")
         print(f"  Alpha: {lora_config.alpha}")
         print(f"  Target modules: {', '.join(lora_config.target_modules)}")
         print(f"  Dropout: {lora_config.dropout}")
-        print("\nTraining Configuration:")
-        print(f"  Learning rate: {config.learning_rate}")
-        print(f"  Batch size (per device): {config.batch_size}")
-        print(f"  Epochs: {config.num_epochs}")
-        print(f"  Warmup steps: {config.warmup_steps}")
-        print(f"  Gradient clip: {config.gradient_clip}")
-        print(f"  Gradient accumulation: {config.gradient_accumulation_steps}")
-        print(f"  Save every: {config.save_every} steps")
+        print_training_config(config)
         if args.resume_checkpoint:
             print(f"\nResuming from: {args.resume_checkpoint}")
         print("=" * 60 + "\n")
@@ -144,12 +122,15 @@ def main():
             resume_checkpoint=args.resume_checkpoint
         )
 
-        if accelerator.is_local_main_process:
+        if accelerator.is_main_process:
             print("\n" + "=" * 60)
             print("LORA FINE-TUNING COMPLETED SUCCESSFULLY!")
             print("=" * 60)
             print(f"Adapter checkpoint: {adapter_path}")
             print("=" * 60)
+
+        # Destroy the process group cleanly (avoids teardown errors at exit).
+        accelerator.end_training()
 
     except Exception as e:
         print(f"\n[Process {accelerator.process_index}] LORA FINE-TUNING FAILED!")
@@ -158,5 +139,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
