@@ -197,10 +197,8 @@ They cover configuration precedence, exact mid-epoch resume (bit-identical weigh
 | Document | Description |
 |---|---|
 | [Detailed_Usage.md](docs/Detailed_Usage.md) | Full command reference for every pipeline stage |
-| [README_DEV.md](docs/README_DEV.md) | Development log — distributed refactoring, technical challenges, and solutions |
-| [Audit_and_Fix_Plan.md](docs/Audit_and_Fix_Plan.md) | Audit of the refactor: defects found, fixes, and how each was verified |
 | [Project_Summary.md](docs/Project_Summary.md) | Training results, evaluation analysis, and performance breakdown |
-| [Replicate Arithmetic_LLM.md](docs/Replicate%20Arithmetic_LLM.md) | Step-by-step replication guide |
+
 
 ## Tech Stack
 
