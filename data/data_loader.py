@@ -257,7 +257,8 @@ def create_dataloaders(
     train_split: float = 0.9,
     shuffle: bool = True,
     num_workers: int = 2,  # Changed from 0 to 2 for parallel loading
-    mode: str = "foundational"
+    mode: str = "foundational",
+    seed: int = 42
 ) -> Tuple[DataLoader, DataLoader]:
     """Create train and validation dataloaders.
     
@@ -270,6 +271,9 @@ def create_dataloaders(
         shuffle: Whether to shuffle training data
         num_workers: Number of worker processes for data loading
         mode: Training mode - "foundational" or "instruction"
+        seed: Seed for the train/validation split. Every process must get the
+            same split, otherwise a sample can be in the training set on one
+            GPU and in the validation set on another.
         
     Returns:
         Tuple of (train_dataloader, val_dataloader)
@@ -307,7 +311,8 @@ def create_dataloaders(
         
         train_dataset, val_dataset = torch.utils.data.random_split(
             full_dataset,
-            [train_size, val_size]
+            [train_size, val_size],
+            generator=torch.Generator().manual_seed(seed)
         )
     
     # Get pad token ID
@@ -317,13 +322,16 @@ def create_dataloaders(
     def collate_with_pad(batch):
         return collate_fn(batch, pad_token_id=pad_token_id, mode=mode)
     
-    # Create dataloaders
+    # Create dataloaders. Each gets its own generator: otherwise creating an
+    # iterator draws a seed from the global torch RNG, so a run resumed in
+    # the middle of an epoch would see a shifted dropout random stream.
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        collate_fn=collate_with_pad
+        collate_fn=collate_with_pad,
+        generator=torch.Generator().manual_seed(seed)
     )
     
     val_dataloader = DataLoader(
@@ -331,7 +339,8 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        collate_fn=collate_with_pad
+        collate_fn=collate_with_pad,
+        generator=torch.Generator().manual_seed(seed)
     )
     
     return train_dataloader, val_dataloader
