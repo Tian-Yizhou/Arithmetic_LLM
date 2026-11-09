@@ -1,5 +1,7 @@
 # Arithmetic LLM Training System - Summary
 
+> **Provenance.** The runs and results in this summary (February 1, 2026) were produced with the **original single-GPU code**, before the Accelerate refactor. They are not measurements of the distributed version. Evaluation settings were the evaluator's defaults at the time: generated expressions with operands 1–20 and nesting depth up to 5 (training data used depth 4), sampled at temperature 0.8.
+
 
 
 ## Completed Steps
@@ -10,8 +12,8 @@
 - Generated test corpus (1,000 samples)
 
 ### 2. Tokenizer Training
-- Trained BPE tokenizer with vocabulary size 1000
-- Tokenizer includes special tokens: `<pad>`, `<unk>`, `<bos>`, `<eos>`, `<tool_call>`
+- Trained BPE tokenizer with target vocabulary size 1000
+- Tokenizer includes special tokens: `<pad>`, `<unk>`, `<bos>`, `<eos>`, `<think>`, `</think>`
 - Tokenizer file saved to `data/tokenizer/tokenizer.pkl`
 
 ### 3. Sequence Analysis
@@ -218,8 +220,8 @@ GRPO RL Training       →   72.70%     76.60%      +29.3%
 ## Notes
 
 1. **Full training pipeline completed successfully**:
-   - Corpus generation with 121,000 total samples
-   - BPE tokenizer with 1,000 vocabulary
+   - Corpus generation
+   - BPE tokenizer (target vocabulary 1,000)
    - 4 different model variants trained and evaluated
    - Progressive improvement from foundational to GRPO model
 
@@ -229,9 +231,7 @@ GRPO RL Training       →   72.70%     76.60%      +29.3%
    - LoRA fine-tuning: ~45 minutes
    - GRPO training: ~5 hours
 
-3. **All results reproducible**: Commands and model paths documented above
-
-4. **Evaluation metrics saved**:
+3. **Evaluation metrics saved**:
    - `evaluation_results/evaluation_metrics_*.json` - Quantitative metrics
    - `evaluation_results/evaluation_summary_*.txt` - Detailed analysis
    - `evaluation_results/sample_outputs_*.json` - Individual predictions

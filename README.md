@@ -28,28 +28,27 @@ Everything is implemented from scratch — tokenizer, data pipeline, model archi
 
 ## Training Pipeline
 
-The model progresses through four training stages, each building on the previous:
+The model is trained in four stages. Instruction fine-tuning can be done with all parameters or with LoRA; both start from the foundational model, and GRPO starts from the full instruction-tuned model (this is what `run_exp.sh` does):
 
 ```
-Foundational          Instruction FT         LoRA FT             GRPO RL
-Pre-training    →     (Full Parameter)  →    (Parameter-       → (Reinforcement
-                                              Efficient)         Learning)
-
-Next-token            Supervised on          Adapts attention     Optimizes with
-prediction on         prompt/response        & FFN layers via     verifiable
-arithmetic corpus     pairs with CoT         low-rank matrices    arithmetic rewards
+                         ┌→ Instruction FT (full parameters) ─→ GRPO RL
+Foundational             │   supervised on prompt/response       optimizes with verifiable
+pre-training ────────────┤   pairs with chain of thought         arithmetic rewards
+next-token prediction    │
+on the arithmetic corpus └→ LoRA FT (parameter-efficient)
+                             low-rank adapters on attention/FFN
 ```
 
 ### Results
 
-| Training Stage | Accuracy | Parse Rate | Improvement |
+| Training Stage | Accuracy | Parse Rate | Change vs. previous row |
 |---|---|---|---|
-| Foundational Pre-training | 0.0% | 0.0% | — |
-| Instruction Fine-tuning | 44.3% | 88.8% | +41.4% |
-| LoRA Fine-tuning | 46.7% | 87.2% | +2.0% |
-| **GRPO (Best)** | **72.7%** | 76.6% | **+29.3%** |
+| Foundational pre-training | 0.0% | 0.0% | — |
+| Instruction fine-tuning | 41.4% | 88.8% | +41.4 pts |
+| LoRA fine-tuning | 43.4% | 83.8% | +2.0 pts |
+| **GRPO** | **72.7%** | 76.6% | **+29.3 pts** (vs. instruction) |
 
-Evaluated on 1,000 test expressions.
+Provenance: these runs (February 1, 2026) were trained and evaluated with the **original single-GPU code**, before the Accelerate refactor. Each model was evaluated on 1,000 generated test expressions (100 for the foundational model) with the evaluator's defaults at the time: operands 1–20, nesting depth up to 5, sampling at temperature 0.8. The checkpoints and per-model details are listed in [docs/Project_Summary.md](docs/Project_Summary.md).
 
 ## Architecture
 
@@ -63,7 +62,7 @@ The following parameters are adjustable.
 | Layers | 6 |
 | FFN hidden dim | 1,024 |
 | Max sequence length | 512 tokens |
-| Tokenizer | Custom BPE (vocab size ~1,000) |
+| Tokenizer | Custom BPE (target vocabulary 1,000; about 275 tokens on the project corpus) |
 | Weight tying | Embedding ↔ output projection |
 | LoRA rank | 16 (alpha = 32) |
 
@@ -79,7 +78,7 @@ Arithmetic_LLM/
 ├── configs/                 # Training, LoRA, and GRPO configurations
 ├── evaluation/              # Distributed evaluation harness, arithmetic verifier
 ├── tools/                   # Interactive solver, diagnostics
-├── tests/                   # Unit tests
+├── tests/                   # Unit and end-to-end training tests (CPU)
 │
 ├── run_exp.sh               # Full pipeline script (single command)
 ├── run_foundational_training.py
@@ -90,9 +89,10 @@ Arithmetic_LLM/
 ├── train_tokenizer.py
 ├── demo.py                  # Batch demo with accuracy report
 │
-├── single_gpu/              # Archived original single-GPU version
-└── evaluation_results/      # Saved metrics and sample outputs
+└── docs/                    # Usage guide and training results
 ```
+
+`run_evaluation.py` writes its metrics and sample outputs to `evaluation_results/` (created on first use).
 
 ## Quick Start
 
@@ -165,34 +165,44 @@ accelerate launch run_foundational_training.py \
 
 Key distributed features:
 - **Automatic device management** — no manual `.to(device)` calls
-- **FP16 mixed precision** — ~40% memory reduction with minimal accuracy loss
+- **Mixed precision** — `--mixed-precision fp16` (default), `bf16` or `no`
 - **Gradient accumulation** — configurable effective batch size without code changes
-- **Synchronized early stopping** — all processes agree on when to stop via gathered metrics
-- **Portable checkpoints** — DDP-unwrapped before saving, loadable in any context
+- **Correct schedules on any number of GPUs** — the learning-rate schedule is sized in real optimizer updates per process
+- **Synchronized early stopping** — all processes agree on when to stop via gathered metrics (all four stages)
+- **Exact checkpoint resumption** — a run resumed mid-epoch continues with the same batches, random state and early-stopping state as an uninterrupted run
+- **Portable checkpoints** — DDP-unwrapped before saving, written atomically, loadable in any context
 - **Distributed evaluation** — test set sharded across GPUs, results aggregated
 
-Checkpoint resumption is supported for interrupted runs:
+Checkpointing supports single-device and DDP training (FSDP/DeepSpeed are rejected at start-up). Resume an interrupted run with the same settings:
 
 ```bash
 accelerate launch run_foundational_training.py \
-  --resume-checkpoint models/foundational_YYMMDD_HHMMSS/checkpoint_step_5000.pt \
+  --resume-checkpoint models/foundational_YYYYMMDD_HHMMSS_ffffff/checkpoint_step_5000.pt \
   ...
 ```
+
+## Tests
+
+The tests run on CPU in under a minute and need no GPU or prepared data (they generate a tiny corpus and tokenizer):
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -t .
+```
+
+They cover configuration precedence, exact mid-epoch resume (bit-identical weights), checkpoint survival, early stopping, the GRPO optimizer lifecycle and accumulation, and real two-process runs (`torchrun`, gloo backend).
 
 ## Documentation
 
 | Document | Description |
 |---|---|
-| [Detailed_Usage.md](Detailed_Usage.md) | Full command reference for every pipeline stage |
-| [README_DEV.md](README_DEV.md) | Development log — distributed refactoring, technical challenges, and solutions |
-| [Project_Summary.md](Project_Summary.md) | Training results, evaluation analysis, and performance breakdown |
-| [Replicate Arithmetic_LLM.md](Replicate%20Arithmetic_LLM.md) | Step-by-step replication guide |
+| [Detailed_Usage.md](docs/Detailed_Usage.md) | Full command reference for every pipeline stage |
+| [Project_Summary.md](docs/Project_Summary.md) | Training results, evaluation analysis, and performance breakdown |
 
 ## Tech Stack
 
 - **[PyTorch](https://pytorch.org/)** — model, training loops, checkpointing
 - **[HuggingFace Accelerate](https://huggingface.co/docs/accelerate)** — distributed training, mixed precision, gradient accumulation
-- **[SymPy](https://www.sympy.org/)** — symbolic arithmetic verification for GRPO rewards
+- GRPO rewards come from a small rule-based verifier (`evaluation/arithmetic_verifier.py`) that extracts the final answer and compares it with the ground truth
 
 ## License
 

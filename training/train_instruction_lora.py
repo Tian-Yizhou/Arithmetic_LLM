@@ -1,12 +1,9 @@
 """LoRA instruction fine-tuning script for arithmetic LLM."""
 
 import os
-import json
 import torch
-from datetime import datetime
 from typing import Optional, Dict
 from accelerate import Accelerator
-import math
 import time
 
 from model.transformer_model import ArithmeticTransformer
@@ -15,13 +12,8 @@ from data.data_loader import create_dataloaders
 from configs.training_config import TrainingConfig
 from configs.lora_config import LoRAConfig
 from model.lora_utils import get_parameter_stats
-from training.train_foundational import (
-    get_linear_schedule_with_warmup,
-    save_checkpoint,
-    load_checkpoint,
-    train_epoch,
-    evaluate,
-)
+from training.common import atomic_torch_save, describe_model, load_checkpoint, path_sha256
+from training.supervised_loop import describe_data, run_supervised_training, write_summary
 
 
 def freeze_non_lora_parameters(model: ArithmeticTransformer) -> None:
@@ -84,15 +76,7 @@ def train_instruction_model_lora(
     lora_config.validate()
     config.lora_config = lora_config
 
-    # Directory creation and logging on main process only.
-    if accelerator.is_local_main_process:
-        # Create unique output directory with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        output_dir = os.path.join(output_dir, f"instruction_lora_{timestamp}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        print(f"LoRA fine-tuning output directory: {output_dir}")
-        print(f"Training configuration: {config.to_dict()}")
+    if accelerator.is_main_process:
         print("Loading tokenizer...")
 
     # Load tokenizer on all processes.
@@ -100,7 +84,7 @@ def train_instruction_model_lora(
     tokenizer.load(tokenizer_path)
     vocab_size = len(tokenizer.token2id)
     
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print(f"Tokenizer vocabulary size: {vocab_size}")
         print("Initializing model architecture...")
 
@@ -130,7 +114,7 @@ def train_instruction_model_lora(
     max_seq_length = model_config.get('max_seq_length', 512)
 
     # Create dataloaders
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print("Creating dataloaders...")
         
     train_dataloader, val_dataloader = create_dataloaders(
@@ -141,10 +125,14 @@ def train_instruction_model_lora(
         train_split=0.9,
         shuffle=True,
         num_workers=0,
-        mode="instruction"
+        mode="instruction",
+        seed=config.seed
     )
+    data_info = describe_data(instruction_corpus_path, tokenizer_path, "instruction", config,
+                              train_dataloader, val_dataloader)
+    data_info['foundational_checkpoint_sha256'] = path_sha256(foundational_checkpoint)
     
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print(f"Training batches: {len(train_dataloader)}")
         print(f"Validation batches: {len(val_dataloader)}")
 
@@ -152,7 +140,7 @@ def train_instruction_model_lora(
     model = ArithmeticTransformer(**model_config)
 
     # Load foundational model weights
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print(f"Loading foundational model from: {foundational_checkpoint}")
         
     checkpoint_metadata = load_checkpoint(
@@ -160,7 +148,7 @@ def train_instruction_model_lora(
         model=model
     )
     
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print(f"Loaded checkpoint from epoch {checkpoint_metadata['epoch']}, "
               f"step {checkpoint_metadata['step']}")
 
@@ -169,7 +157,7 @@ def train_instruction_model_lora(
     freeze_non_lora_parameters(model)
 
     # Display parameter statistics (main process only).
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         stats = get_parameter_stats(model)
         print(f"Total parameters: {stats['total']:,}")
         print(f"Trainable parameters: {stats['trainable']:,}")
@@ -184,174 +172,36 @@ def train_instruction_model_lora(
         model, optimizer, train_dataloader, val_dataloader
     )
 
-    # Calculate total training steps (update steps, not micro-batches).
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accelerator.gradient_accumulation_steps)
-    total_steps = num_update_steps_per_epoch * config.num_epochs
-
-    # Use 5% of total steps for learning rate warmup.
-    warmup_ratio = 0.05
-    real_warmup_steps = int(total_steps * warmup_ratio)
-
-    # Initialize scheduler
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=real_warmup_steps,
-        num_training_steps=total_steps
-    )
-    
-    # Prepare scheduler for distributed training.
-    scheduler = accelerator.prepare(scheduler)
-
-    # Save configuration (main process only).
-    if accelerator.is_local_main_process:
-        config.to_json(os.path.join(output_dir, 'training_config.json'))
-        with open(os.path.join(output_dir, 'model_config.json'), 'w') as f:
-            json.dump(model_config, f, indent=2)
-        with open(os.path.join(output_dir, 'foundational_checkpoint.txt'), 'w') as f:
+    def write_run_files(run_dir: str) -> None:
+        with open(os.path.join(run_dir, 'foundational_checkpoint.txt'), 'w') as f:
             f.write(foundational_checkpoint)
 
+    if accelerator.is_main_process:
         print("\nStarting LoRA instruction fine-tuning...")
 
-    global_step = 0
-    start_epoch = 0
-    best_val_loss = float('inf')
-    training_log = []
-    prev_val_loss = None
-    patience_counter = 0
-    early_stopped = False
-
-    # Resume from checkpoint if provided.
-    if resume_checkpoint is not None:
-        if accelerator.is_local_main_process:
-            print(f"\nResuming training from checkpoint: {resume_checkpoint}")
-        unwrapped_model = accelerator.unwrap_model(model)
-        resume_metadata = load_checkpoint(
-            checkpoint_path=resume_checkpoint,
-            model=unwrapped_model,
-            optimizer=optimizer,
-            scheduler=scheduler
-        )
-        start_epoch = resume_metadata['epoch']
-        global_step = resume_metadata['step']
-        if accelerator.is_local_main_process:
-            print(f"Resumed from epoch {start_epoch}, global step {global_step}")
-
-    for epoch in range(start_epoch, config.num_epochs):
-        if accelerator.is_local_main_process:
-            print(f"\n{'='*60}")
-            print(f"Epoch {epoch + 1}/{config.num_epochs}")
-            print(f"{'='*60}")
-
-        # Train one epoch.
-        train_loss, global_step = train_epoch(
-            model=model,
-            train_dataloader=train_dataloader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            config=config,
-            epoch=epoch + 1,
-            global_step=global_step,
-            output_dir=output_dir,
-            tokenizer_vocab_size=vocab_size,
-            accelerator=accelerator
-        )
-
-        # Evaluate on validation set.
-        if accelerator.is_local_main_process:
-            print("\nEvaluating on validation set...")
-        val_loss = evaluate(model, val_dataloader, config, accelerator)
-
-        if accelerator.is_local_main_process:
-            print(f"\nEpoch {epoch + 1} Summary:")
-            print(f"  Training Loss: {train_loss:.4f}")
-            print(f"  Validation Loss: {val_loss:.4f}")
-
-            # Log metrics
-            training_log.append({
-                'epoch': epoch + 1,
-                'step': global_step,
-                'train_loss': train_loss,
-                'val_loss': val_loss,
-                'learning_rate': scheduler.get_last_lr()[0]
-            })
-
-            # Save best model checkpoint
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                
-                # Unwrap model to get raw state dict for saving.
-                unwrapped_model = accelerator.unwrap_model(model)
-                
-                best_checkpoint_path = save_checkpoint(
-                    model=unwrapped_model,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    epoch=epoch + 1,
-                    step=global_step,
-                    loss=val_loss,
-                    config=config,
-                    tokenizer_vocab_size=vocab_size,
-                    output_dir=output_dir,
-                    is_final=False
-                )
-                
-                # Rename to best_model.pt.
-                best_model_path = os.path.join(output_dir, 'best_model.pt')
-                if os.path.exists(best_model_path):
-                    os.remove(best_model_path)
-                os.rename(best_checkpoint_path, best_model_path)
-                print(f"  New best model saved: {best_model_path}")
-
-        # Early stopping check (all processes see the same val_loss from gather)
-        if config.early_stopping and prev_val_loss is not None:
-            if prev_val_loss == 0:
-                improvement_ratio = 0.0 if val_loss == 0 else float('inf')
-            else:
-                improvement_ratio = (prev_val_loss - val_loss) / abs(prev_val_loss)
-
-            if improvement_ratio < config.early_stopping_epsilon:
-                patience_counter += 1
-                if accelerator.is_local_main_process:
-                    print(f"  Early stopping: insufficient improvement ({improvement_ratio:.6f} < {config.early_stopping_epsilon}), patience {patience_counter}/{config.early_stopping_patience}")
-                if patience_counter >= config.early_stopping_patience:
-                    if accelerator.is_local_main_process:
-                        print(f"\nEarly stopping triggered at epoch {epoch + 1}!")
-                    early_stopped = True
-            else:
-                patience_counter = 0
-
-        prev_val_loss = val_loss
-
-        # Wait for all processes before next epoch.
-        accelerator.wait_for_everyone()
-
-        if early_stopped:
-            break
-
-    # Save final model
-    accelerator.wait_for_everyone()
+    result = run_supervised_training(
+        stage="instruction_lora",
+        model=model,
+        optimizer=optimizer,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        config=config,
+        accelerator=accelerator,
+        output_parent=output_dir,
+        data_info=data_info,
+        tokenizer_vocab_size=vocab_size,
+        model_config=model_config,
+        resume_checkpoint=resume_checkpoint,
+        write_run_files=write_run_files,
+    )
+    output_dir = result['output_dir']
 
     adapter_path = ""
+    merged_model_path = None
     
-    if accelerator.is_local_main_process:
-        print("\nSaving final fine-tuned model checkpoint...")
-        
+    if accelerator.is_main_process:
         # Unwrap model for saving.
         unwrapped_model = accelerator.unwrap_model(model)
-        
-        final_checkpoint_path = save_checkpoint(
-            model=unwrapped_model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            epoch=config.num_epochs,
-            step=global_step,
-            loss=train_loss,
-            config=config,
-            tokenizer_vocab_size=vocab_size,
-            output_dir=output_dir,
-            is_final=True
-        )
-        print(f"Final model checkpoint saved: {final_checkpoint_path}")
 
         # Save LoRA adapters separately.
         adapter_path = os.path.join(output_dir, 'lora_adapter.pt')
@@ -361,25 +211,16 @@ def train_instruction_model_lora(
         else:
             print("Warning: Model does not have 'save_lora_adapters' method.")
 
-        merged_model_path = None
         if save_merged_model:
             print("Merging LoRA weights and saving merged model...")
             if hasattr(unwrapped_model, 'merge_lora_weights'):
                 unwrapped_model.merge_lora_weights()
                 merged_model_path = os.path.join(output_dir, 'merged_model.pt')
-                torch.save(
+                atomic_torch_save(
                     {
                         'model_state_dict': unwrapped_model.state_dict(),
                         'config': config.to_dict(),
-                        'model_config': {
-                            'vocab_size': unwrapped_model.vocab_size,
-                            'd_model': unwrapped_model.d_model,
-                            'nhead': unwrapped_model.nhead,
-                            'num_layers': unwrapped_model.num_layers,
-                            'dim_feedforward': unwrapped_model.dim_feedforward,
-                            'dropout': unwrapped_model.dropout,
-                            'max_seq_length': unwrapped_model.max_seq_length,
-                        },
+                        'model_config': describe_model(unwrapped_model),
                         'tokenizer_vocab_size': vocab_size,
                         'merged': True,
                         'foundational_checkpoint': foundational_checkpoint,
@@ -390,44 +231,27 @@ def train_instruction_model_lora(
             else:
                 print("Warning: Model does not have 'merge_lora_weights' method.")
 
-        # Compute total training duration.
-        end_time = time.time()
-        total_seconds = end_time - start_time
-        
-        # Format duration as HH:MM:SS.
-        hours, rem = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(rem, 60)
-        formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+    # Compute total training duration (of this invocation, if resumed).
+    total_seconds = time.time() - start_time
+    
+    # Format duration as HH:MM:SS.
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
-        # Save training log
-        log_path = os.path.join(output_dir, 'training_log.json')
-        with open(log_path, 'w') as f:
-            json.dump(training_log, f, indent=2)
-        print(f"Training log saved: {log_path}")
+    summary = result['summary']
+    summary.update({
+        'foundational_checkpoint': foundational_checkpoint,
+        'lora_adapter_path': adapter_path,
+        'merged_model_path': merged_model_path,
+        # Training duration.
+        'training_duration_seconds': total_seconds,
+        'training_duration_formatted': formatted_time
+    })
+    write_summary(accelerator, output_dir, summary)
 
-        # Save summary
-        summary = {
-            'total_epochs': config.num_epochs,
-            'total_steps': global_step,
-            'final_train_loss': train_loss,
-            'final_val_loss': val_loss,
-            'best_val_loss': best_val_loss,
-            'model_config': model_config,
-            'training_config': config.to_dict(),
-            'tokenizer_vocab_size': vocab_size,
-            'foundational_checkpoint': foundational_checkpoint,
-            'lora_adapter_path': adapter_path,
-            'merged_model_path': merged_model_path,
-            # Training duration.
-            'training_duration_seconds': total_seconds,
-            'training_duration_formatted': formatted_time
-        }
-        
-        summary_path = os.path.join(output_dir, 'training_summary.json')
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=2)
-        print(f"Training summary saved: {summary_path}")
-        
+    if accelerator.is_main_process:
+        print(f"Training summary saved: {os.path.join(output_dir, 'training_summary.json')}")
         # Print training duration.
         print(f"Total training time: {formatted_time}")
 
@@ -436,6 +260,5 @@ def train_instruction_model_lora(
         print(f"Output directory: {output_dir}")
         print("="*60)
 
+    accelerator.wait_for_everyone()
     return adapter_path
-
-

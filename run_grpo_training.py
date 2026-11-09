@@ -4,8 +4,9 @@ import argparse
 import os
 
 from configs.grpo_config import GRPOConfig
+from configs.training_config import MIXED_PRECISION_CHOICES
+from training.common import build_accelerator
 from training.train_grpo import train_grpo_model
-from accelerate import Accelerator
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -44,9 +45,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-5)
-    parser.add_argument("--warmup-steps", type=int, default=100)
-    parser.add_argument("--save-every", type=int, default=500)
-    parser.add_argument("--eval-every", type=int, default=250)
+    parser.add_argument("--warmup-steps", type=int, default=None, help="Number of warmup updates; overrides --warmup-ratio when given (default: unset)")
+    parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Fraction of all updates used for warmup (default: 0.05)")
+    parser.add_argument("--save-every", type=int, default=500, help="Save checkpoint every N optimizer updates")
+    parser.add_argument("--eval-every", type=int, default=250, help="Validate every N optimizer updates (and at the end of every epoch)")
+    parser.add_argument("--val-size", type=int, default=256, help="Prompts held out for validation, best-model saving and early stopping; 0 disables them (default: 256)")
+    parser.add_argument("--seed", type=int, default=42, help="Seed for data shuffling, the validation split and sampling (default: 42)")
+    parser.add_argument("--mixed-precision", type=str, default="fp16", choices=MIXED_PRECISION_CHOICES, help="Mixed precision mode passed to Accelerate (default: fp16)")
     parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--num-candidates", type=int, default=4)
     parser.add_argument("--temperature", type=float, default=0.8)
@@ -93,12 +98,6 @@ def _validate_args(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
-    
-    # Initialize Accelerator for distributed training and device placement.
-    accelerator = Accelerator(
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision="fp16"
-    )
 
     # Validate CLI arguments.
     _validate_args(args)
@@ -108,6 +107,7 @@ def main() -> None:
         batch_size=args.batch_size,
         num_epochs=args.num_epochs,
         warmup_steps=args.warmup_steps,
+        warmup_ratio=args.warmup_ratio,
         gradient_clip=args.gradient_clip,
         save_every=args.save_every,
         eval_every=args.eval_every,
@@ -122,13 +122,25 @@ def main() -> None:
         early_stopping=args.early_stopping,
         early_stopping_patience=args.early_stopping_patience,
         early_stopping_epsilon=args.early_stopping_epsilon,
+        mixed_precision=args.mixed_precision,
+        seed=args.seed,
+        val_size=args.val_size,
     )
     
     # Validate configuration.
     config.validate()
 
+    # Initialize Accelerator for distributed training and device placement.
+    # GRPOTrainer groups batches for gradient accumulation itself, so the
+    # Accelerator gets gradient_accumulation_steps=1.
+    accelerator = build_accelerator(
+        mixed_precision=config.mixed_precision,
+        gradient_accumulation_steps=1,
+        seed=config.seed
+    )
+
     # Display configuration (main process only)
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         print("\n" + "=" * 60)
         print("GRPO TRAINING (Accelerated)")
         print("=" * 60)
@@ -142,7 +154,14 @@ def main() -> None:
         print(f"  Learning rate: {config.learning_rate}")
         print(f"  Batch size (per device): {config.batch_size}")
         print(f"  Epochs: {config.num_epochs}")
-        print(f"  Warmup steps: {config.warmup_steps}")
+        if config.warmup_steps is not None:
+            print(f"  Warmup steps: {config.warmup_steps}")
+        else:
+            print(f"  Warmup ratio: {config.warmup_ratio}")
+        print(f"  Mixed precision: {config.mixed_precision}")
+        print(f"  Seed: {config.seed}")
+        print(f"  Validation prompts: {config.val_size}")
+        print(f"  Processes: {accelerator.num_processes}")
         print(f"  Gradient clip: {config.gradient_clip}")
         print(f"  Gradient accumulation: {config.gradient_accumulation_steps}")
         print(f"  Save every: {config.save_every} steps")
@@ -181,7 +200,7 @@ def main() -> None:
             resume_checkpoint=args.resume_checkpoint,
         )
 
-        if accelerator.is_local_main_process:
+        if accelerator.is_main_process:
             print("\n" + "=" * 60)
             print("GRPO TRAINING COMPLETED SUCCESSFULLY!")
             print("=" * 60)
@@ -190,6 +209,9 @@ def main() -> None:
             if result.get('log_path'):
                 print(f"Training log: {result['log_path']}")
             print("=" * 60)
+
+        # Destroy the process group cleanly (avoids teardown errors at exit).
+        accelerator.end_training()
 
     except Exception as e:
         print(f"\n[Process {accelerator.process_index}] GRPO TRAINING FAILED!")
